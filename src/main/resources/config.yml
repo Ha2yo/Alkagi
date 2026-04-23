@@ -1,0 +1,11 @@
+arena: {}
+
+settings:
+  piece-size: 2.35
+  control-radius: piece-size * 2.5
+  turn-time-seconds: 30
+
+music:
+  sound-key: "alkagi.ingame"
+  volume: 0.1225
+  loop-seconds: 120

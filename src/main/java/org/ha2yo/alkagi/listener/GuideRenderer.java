@@ -1,0 +1,375 @@
+package org.ha2yo.alkagi.listener;
+
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Color;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Particle;
+import org.bukkit.World;
+import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Interaction;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.EulerAngle;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
+import org.ha2yo.alkagi.game.GameManager;
+import org.ha2yo.alkagi.game.GameSession;
+import org.ha2yo.alkagi.game.TeamType;
+import org.ha2yo.alkagi.game.model.PieceData;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * 배치 가이드와 조준 가이드를 플레이어에게 렌더링한다.
+ */
+public final class GuideRenderer {
+
+    private static final double TRACE_DISTANCE = 256.0D;
+    private static final double GUIDE_Y_OFFSET = 0.12D;
+    private static final double AIM_ARROW_HEIGHT = 0.02D;
+    private static final double AIM_ARROW_MARGIN = 0.24D;
+    private static final double ARROW_VISUAL_MARGIN = 1.65D;
+    private static final int ARROW_SHAFT_SEGMENTS = 13;
+    private static final int ARROW_HEAD_SEGMENTS = 7;
+    private static final double ARROW_HEAD_BACK_OFFSET = 0.18D;
+    private static final double ARROW_HEAD_BACK_STEP = 0.24D;
+    private static final double ARROW_HEAD_SIDE_OFFSET = 0.18D;
+    private static final double ARROW_HEAD_SIDE_STEP = 0.16D;
+    private static final double ARROW_SHAFT_START_OFFSET = 0.12D;
+    private static final double ARM_STAND_Y_OFFSET = -1.1D;
+    private static final double ARROW_LATERAL_OFFSET = 0.0D;
+    private static final double ARM_HORIZONTAL_PITCH = Math.toRadians(270.0D);
+    private static final double ARM_HEAD_YAW = Math.toRadians(24.0D);
+    private static final double RING_POINT_SPACING = 0.2D;
+    private static final Particle.DustOptions BLACK_DUST = new Particle.DustOptions(Color.fromRGB(32, 32, 32), 1.45F);
+    private static final Particle.DustOptions WHITE_DUST = new Particle.DustOptions(Color.fromRGB(245, 245, 245), 1.45F);
+    private static final Particle.DustOptions GREEN_DUST = new Particle.DustOptions(Color.fromRGB(110, 255, 110), 1.5F);
+    private static final Particle.DustOptions CYAN_DUST = new Particle.DustOptions(Color.fromRGB(105, 220, 235), 1.4F);
+
+    private final JavaPlugin plugin;
+    private final GameManager gameManager;
+    private final Map<UUID, AimArrowMarker> aimMarkers = new HashMap<>();
+    private BukkitTask task;
+
+    public GuideRenderer(JavaPlugin plugin, GameManager gameManager) {
+        this.plugin = plugin;
+        this.gameManager = gameManager;
+    }
+
+    public void start() {
+        stop();
+        this.task = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
+    }
+
+    public void stop() {
+        if (task != null) {
+            task.cancel();
+            task = null;
+        }
+        clearAllAimMarkers();
+    }
+
+    private void tick() {
+        GameSession session = gameManager.getSession();
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            if (session.isPlacementPhase()) {
+                renderPlacementGuide(player, session);
+            } else if (session.isPlayingPhase()) {
+                renderPlayingGuide(player, session);
+                if (!session.isCurrentTurnPlayer(player.getUniqueId()) || session.getSelectedPiece() == null) {
+                    session.sendTurnStatusActionBar(player);
+                }
+            } else {
+                clearAimMarker(player.getUniqueId());
+            }
+        }
+    }
+
+    private void renderPlacementGuide(Player player, GameSession session) {
+        clearAimMarker(player.getUniqueId());
+        TeamType teamType = session.getTeam(player.getUniqueId());
+        if (teamType == null || !session.getPlacementPlayers().containsValue(player.getUniqueId())) {
+            return;
+        }
+
+        Location target = gameManager.getArenaData().projectToBoard(player.getEyeLocation(), player.getEyeLocation().getDirection(), TRACE_DISTANCE);
+        if (target == null) {
+            return;
+        }
+
+        drawPlacementMarker(player, target.clone().add(0.0D, 0.05D, 0.0D), teamType);
+    }
+
+    private void renderPlayingGuide(Player player, GameSession session) {
+        if (!session.isCurrentTurnPlayer(player.getUniqueId()) || gameManager.getBoardManager().isActionRunning()) {
+            clearAimMarker(player.getUniqueId());
+            return;
+        }
+
+        PieceData selectedPiece = session.getSelectedPiece();
+        if (selectedPiece == null) {
+            clearAimMarker(player.getUniqueId());
+            RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
+                player.getEyeLocation(),
+                player.getEyeLocation().getDirection(),
+                TRACE_DISTANCE,
+                entity -> entity instanceof Interaction
+                    && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
+            );
+
+            if (entityTrace == null || entityTrace.getHitEntity() == null) {
+                return;
+            }
+
+            PieceData hoveredPiece = gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
+            if (hoveredPiece == null || hoveredPiece.getTeamType() != session.getTeam(player.getUniqueId())) {
+                return;
+            }
+
+            drawPieceHover(player, hoveredPiece.getLocation());
+            return;
+        }
+
+        Location target = gameManager.getArenaData().projectToBoardPlane(player.getEyeLocation(), player.getEyeLocation().getDirection(), TRACE_DISTANCE);
+        if (target == null) {
+            clearAimMarker(player.getUniqueId());
+            drawPieceHover(player, selectedPiece.getLocation());
+            return;
+        }
+
+        drawAimGuide(player, selectedPiece, target);
+    }
+
+    private void drawPlacementMarker(Player viewer, Location target, TeamType teamType) {
+        Particle.DustOptions dust = teamType == TeamType.BLACK ? BLACK_DUST : WHITE_DUST;
+        double radius = gameManager.getBoardManager().getPieceRadius();
+        drawRing(viewer, target, radius, dust, 18);
+    }
+
+    private void drawPieceHover(Player viewer, Location pieceLocation) {
+        double radius = (gameManager.getBoardManager().getSelectionDiameter() / 2.0D) * 1.08D;
+        drawRing(viewer, pieceLocation.clone().add(0.0D, 0.1D, 0.0D), radius, GREEN_DUST, 22);
+    }
+
+    private void drawAimGuide(Player player, PieceData selectedPiece, Location target) {
+        Location origin = selectedPiece.getLocation().clone().add(0.0D, GUIDE_Y_OFFSET, 0.0D);
+        double controlRadius = gameManager.getBoardManager().getLaunchControlRadius();
+        Location clampedTarget = gameManager.getBoardManager().clampLaunchTarget(selectedPiece, target);
+
+        drawRing(player, origin, controlRadius, CYAN_DUST,
+            Math.max(32, (int) Math.ceil((Math.PI * 2.0D * controlRadius) / RING_POINT_SPACING)));
+
+        Vector launchVector = gameManager.getBoardManager().createLaunchVector(selectedPiece, clampedTarget);
+        double power = launchVector.length();
+        if (power <= 0.0001D) {
+            clearAimMarker(player.getUniqueId());
+            return;
+        }
+
+        Vector direction = launchVector.clone().normalize();
+        double maxGuideLength = Math.max(0.35D, controlRadius);
+        double guideLength = Math.min(maxGuideLength, origin.distance(clampedTarget));
+        if (guideLength <= 0.0001D) {
+            clearAimMarker(player.getUniqueId());
+            return;
+        }
+
+        Location arrowOrigin = origin.clone().add(0.0D, AIM_ARROW_HEIGHT, 0.0D);
+        Location tip = arrowOrigin.clone().add(direction.clone().multiply(guideLength));
+        updateAimMarker(player, arrowOrigin, tip, direction);
+
+        player.sendActionBar(Component.text("세기: " + String.format("%.2f", power), NamedTextColor.GREEN));
+    }
+
+    private void drawRing(Player viewer, Location center, double radius, Particle.DustOptions dust, int points) {
+        World world = center.getWorld();
+        if (world == null) {
+            return;
+        }
+
+        for (int i = 0; i < points; i++) {
+            double angle = Math.PI * 2.0D * i / points;
+            double x = center.getX() + Math.cos(angle) * radius;
+            double z = center.getZ() + Math.sin(angle) * radius;
+            spawnDust(viewer, new Location(world, x, center.getY(), z), dust);
+        }
+    }
+
+    private void updateAimMarker(Player owner, Location arrowOrigin, Location tip, Vector direction) {
+        World world = tip.getWorld();
+        if (world == null) {
+            clearAimMarker(owner.getUniqueId());
+            return;
+        }
+
+        AimArrowMarker marker = aimMarkers.compute(owner.getUniqueId(), (playerId, existing) -> existing != null && existing.isValid()
+            ? existing
+            : AimArrowMarker.spawn(world, tip));
+        if (marker == null || !marker.isValid()) {
+            clearAimMarker(owner.getUniqueId());
+            return;
+        }
+
+        Vector flatDirection = direction.clone().setY(0.0D);
+        if (flatDirection.lengthSquared() <= 0.0001D) {
+            clearAimMarker(owner.getUniqueId());
+            return;
+        }
+        flatDirection.normalize();
+
+        Vector sideDirection = new Vector(-flatDirection.getZ(), 0.0D, flatDirection.getX()).normalize();
+        Vector lateralOffset = sideDirection.clone().multiply(ARROW_LATERAL_OFFSET);
+        Vector shaftStartOffset = flatDirection.clone().multiply(ARROW_SHAFT_START_OFFSET);
+        marker.update(
+            arrowOrigin.clone().add(lateralOffset).subtract(shaftStartOffset),
+            tip.clone().add(lateralOffset),
+            flatDirection,
+            sideDirection
+        );
+
+        for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
+            marker.showTo(onlinePlayer, plugin);
+        }
+    }
+
+    private static void configureArrowStand(ArmorStand stand) {
+        stand.setVisible(false);
+        stand.setMarker(true);
+        stand.setSmall(false);
+        stand.setArms(false);
+        stand.setBasePlate(false);
+        stand.setGravity(false);
+        stand.setInvulnerable(true);
+        stand.setSilent(true);
+        if (stand.getEquipment() != null) {
+            stand.getEquipment().setItemInMainHand(null);
+            stand.getEquipment().setHelmet(new ItemStack(Material.LIME_WOOL));
+        }
+    }
+
+    private void clearAimMarker(UUID playerId) {
+        AimArrowMarker marker = aimMarkers.remove(playerId);
+        if (marker != null) {
+            marker.remove();
+        }
+    }
+
+    private void clearAllAimMarkers() {
+        for (UUID playerId : new ArrayList<>(aimMarkers.keySet())) {
+            clearAimMarker(playerId);
+        }
+    }
+
+    private void spawnDust(Player viewer, Location location, Particle.DustOptions dust) {
+        World world = location.getWorld();
+        if (world == null) {
+            return;
+        }
+
+        viewer.spawnParticle(Particle.DUST, location, 1, 0.01D, 0.0D, 0.01D, 0.0D, dust);
+        world.spawnParticle(Particle.DUST, location, 0, 0.0D, 0.0D, 0.0D, 0.0D, dust, true);
+    }
+
+    private record AimArrowMarker(java.util.List<ArmorStand> shaft, java.util.List<ArmorStand> leftHead, java.util.List<ArmorStand> rightHead) {
+
+        private static AimArrowMarker spawn(World world, Location location) {
+            java.util.List<ArmorStand> shaft = new java.util.ArrayList<>();
+            for (int i = 0; i < ARROW_SHAFT_SEGMENTS; i++) {
+                shaft.add(world.spawn(location, ArmorStand.class, GuideRenderer::configureArrowStand));
+            }
+            java.util.List<ArmorStand> leftHead = new java.util.ArrayList<>();
+            java.util.List<ArmorStand> rightHead = new java.util.ArrayList<>();
+            for (int i = 0; i < ARROW_HEAD_SEGMENTS; i++) {
+                leftHead.add(world.spawn(location, ArmorStand.class, GuideRenderer::configureArrowStand));
+                rightHead.add(world.spawn(location, ArmorStand.class, GuideRenderer::configureArrowStand));
+            }
+            return new AimArrowMarker(shaft, leftHead, rightHead);
+        }
+
+        private boolean isValid() {
+            for (ArmorStand stand : shaft) {
+                if (!stand.isValid()) {
+                    return false;
+                }
+            }
+            for (ArmorStand stand : leftHead) {
+                if (!stand.isValid()) {
+                    return false;
+                }
+            }
+            for (ArmorStand stand : rightHead) {
+                if (!stand.isValid()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private void update(Location origin, Location tip, Vector direction, Vector side) {
+            for (int i = 0; i < shaft.size(); i++) {
+                double progress = shaft.size() == 1 ? 1.0D : i / (double) (shaft.size() - 1);
+                Location segment = origin.clone().add(tip.toVector().subtract(origin.toVector()).multiply(progress));
+                ArmorStand stand = shaft.get(i);
+                Location standLocation = segment.clone().add(0.0D, ARM_STAND_Y_OFFSET, 0.0D);
+                standLocation.setDirection(direction);
+                stand.teleport(standLocation);
+                stand.setHeadPose(new EulerAngle(ARM_HORIZONTAL_PITCH, 0.0D, 0.0D));
+            }
+
+            for (int i = 0; i < leftHead.size(); i++) {
+                double backOffset = ARROW_HEAD_BACK_OFFSET + (ARROW_HEAD_BACK_STEP * i);
+                double sideOffset = ARROW_HEAD_SIDE_OFFSET + (ARROW_HEAD_SIDE_STEP * i);
+                Location headBase = tip.clone().subtract(direction.clone().multiply(backOffset));
+
+                ArmorStand left = leftHead.get(i);
+                Location leftLocation = headBase.clone().add(side.clone().multiply(sideOffset)).add(0.0D, ARM_STAND_Y_OFFSET, 0.0D);
+                leftLocation.setDirection(direction);
+                left.teleport(leftLocation);
+                left.setHeadPose(new EulerAngle(ARM_HORIZONTAL_PITCH, -ARM_HEAD_YAW, 0.0D));
+
+                ArmorStand right = rightHead.get(i);
+                Location rightLocation = headBase.clone().subtract(side.clone().multiply(sideOffset)).add(0.0D, ARM_STAND_Y_OFFSET, 0.0D);
+                rightLocation.setDirection(direction);
+                right.teleport(rightLocation);
+                right.setHeadPose(new EulerAngle(ARM_HORIZONTAL_PITCH, ARM_HEAD_YAW, 0.0D));
+            }
+        }
+
+        private void showTo(Player player, JavaPlugin plugin) {
+            for (ArmorStand stand : shaft) {
+                player.showEntity(plugin, stand);
+            }
+            for (ArmorStand stand : leftHead) {
+                player.showEntity(plugin, stand);
+            }
+            for (ArmorStand stand : rightHead) {
+                player.showEntity(plugin, stand);
+            }
+        }
+
+        private void remove() {
+            for (ArmorStand stand : shaft) {
+                if (stand.isValid()) {
+                    stand.remove();
+                }
+            }
+            for (ArmorStand stand : leftHead) {
+                if (stand.isValid()) {
+                    stand.remove();
+                }
+            }
+            for (ArmorStand stand : rightHead) {
+                if (stand.isValid()) {
+                    stand.remove();
+                }
+            }
+        }
+    }
+}

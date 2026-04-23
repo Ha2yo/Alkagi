@@ -1,0 +1,13 @@
+name: Alkagi
+version: '1.0.0'
+main: org.ha2yo.alkagi.AlkagiPlugin
+api-version: '1.21'
+author: Codex
+commands:
+  alkagi:
+    description: Team alkagi minigame command.
+    usage: /alkagi <status|start|forcestart|stop|reset|setboardpos1|setboardpos2|setlobby|setspectator|setblackplace|setwhiteplace>
+permissions:
+  alkagi.admin:
+    description: Allows access to alkagi admin commands.
+    default: op

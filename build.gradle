@@ -1,0 +1,54 @@
+plugins {
+    id 'java'
+}
+
+group = 'org.ha2yo'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+    maven {
+        url = 'https://repo.papermc.io/repository/maven-public/'
+    }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+sourceSets {
+    main {
+        java {
+            exclude 'org/ha2yo/alkagi2/**'
+        }
+    }
+}
+
+tasks.processResources {
+    filteringCharset = 'UTF-8'
+}
+
+jar {
+    archiveFileName = 'alkagi.jar'
+    destinationDirectory = file('C:/Users/Ik9014/Desktop/마크 서버/plugins')
+}
+
+jar {
+    archiveFileName = 'alkagi.jar'
+    destinationDirectory = file('C:/Users/Ik9014/Desktop/마크 서버/plugins')
+}
+
+jar {
+    archiveFileName = 'alkagi.jar'
+    destinationDirectory = file('C:\\Users\\Ik9014\\Desktop\\마크 서버\\plugins')
+}
