@@ -14,6 +14,7 @@ import org.bukkit.SoundCategory;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
@@ -445,6 +446,7 @@ public final class GameSession {
         sendAllOnlinePlayersToLobby();
         scoreboardManager.showResult(this, winner);
         broadcastWinnerTitle(winner);
+        broadcastKillRanking();
         resetAfterDelay();
     }
 
@@ -925,10 +927,10 @@ public final class GameSession {
 
     private void broadcastWinnerTitle(@Nullable TeamType winner) {
         Title title;
-        Component subtitle = createSharedMvpSubtitle();
+        Component subtitle = createSingleMvpSubtitle();
         if (winner == null) {
             title = Title.title(
-                Component.text("\uBB34\uC2B9\uBD80\uC785\uB2C8\uB2E4!", NamedTextColor.YELLOW),
+                Component.text("무승부입니다!", NamedTextColor.YELLOW),
                 subtitle,
                 Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(3), Duration.ofMillis(500))
             );
@@ -949,50 +951,111 @@ public final class GameSession {
         playResultSound(winner);
     }
 
-    private Component createSharedMvpSubtitle() {
-        List<UUID> mvpPlayerIds = getSharedMvpPlayerIds();
-        if (mvpPlayerIds.isEmpty()) {
+    private Component createSingleMvpSubtitle() {
+        UUID topKillerId = getTopKillerId();
+        if (topKillerId == null) {
             return Component.empty();
         }
 
-        int eliminatedCount = eliminatedPiecesByPlayer.getOrDefault(mvpPlayerIds.get(0), 0);
-        var subtitle = Component.text();
-        subtitle.append(Component.text(mvpPlayerIds.size() > 1 ? "공동 MVP: " : "MVP: ", NamedTextColor.YELLOW));
-
-        for (int index = 0; index < mvpPlayerIds.size(); index++) {
-            UUID playerId = mvpPlayerIds.get(index);
-            Player mvpPlayer = plugin.getServer().getPlayer(playerId);
-            String playerName = mvpPlayer == null ? "알 수 없음" : mvpPlayer.getName();
-            TeamType teamType = playerTeamMap.get(playerId);
-            NamedTextColor color = teamType == null ? NamedTextColor.AQUA : teamType.getColor();
-            if (index > 0) {
-                subtitle.append(Component.text(", ", NamedTextColor.GRAY));
-            }
-            subtitle.append(Component.text(playerName, color));
-        }
-
-        subtitle.append(Component.text(" (" + eliminatedCount + "개)", NamedTextColor.WHITE));
-        return subtitle.build();
+        int eliminatedCount = eliminatedPiecesByPlayer.getOrDefault(topKillerId, 0);
+        TeamType teamType = playerTeamMap.get(topKillerId);
+        NamedTextColor color = teamType == null ? NamedTextColor.AQUA : teamType.getColor();
+        return Component.text()
+            .append(Component.text("MVP: ", NamedTextColor.YELLOW))
+            .append(Component.text(resolvePlayerName(topKillerId), color))
+            .append(Component.text(" (" + eliminatedCount + "개)", NamedTextColor.WHITE))
+            .build();
     }
 
-    private List<UUID> getSharedMvpPlayerIds() {
-        int maxEliminatedCount = 0;
-        for (Map.Entry<UUID, Integer> entry : eliminatedPiecesByPlayer.entrySet()) {
-            if (entry.getValue() > maxEliminatedCount) {
-                maxEliminatedCount = entry.getValue();
-            }
-        }
-        if (maxEliminatedCount <= 0) {
-            return List.of();
+    private @Nullable UUID getTopKillerId() {
+        return getKillRankingEntries().stream()
+            .findFirst()
+            .map(Map.Entry::getKey)
+            .orElse(null);
+    }
+
+    private void broadcastKillRanking() {
+        List<Map.Entry<UUID, Integer>> rankingEntries = getKillRankingEntries();
+        if (rankingEntries.isEmpty()) {
+            return;
         }
 
-        List<UUID> mvpPlayerIds = new ArrayList<>();
-        for (Map.Entry<UUID, Integer> entry : eliminatedPiecesByPlayer.entrySet()) {
-            if (entry.getValue() == maxEliminatedCount) {
-                mvpPlayerIds.add(entry.getKey());
+        List<Component> rankingLines = new ArrayList<>();
+        rankingLines.add(Component.text("========================================", NamedTextColor.DARK_GRAY));
+        rankingLines.add(Component.text("            TOP", NamedTextColor.WHITE));
+
+        int displayedCount = Math.min(10, rankingEntries.size());
+        int previousRank = 0;
+        int previousKillCount = Integer.MIN_VALUE;
+        for (int index = 0; index < displayedCount; index++) {
+            Map.Entry<UUID, Integer> entry = rankingEntries.get(index);
+            int killCount = entry.getValue();
+            int rank = killCount == previousKillCount ? previousRank : index + 1;
+            rankingLines.add(createKillRankingLine(rank, entry.getKey(), killCount));
+            previousRank = rank;
+            previousKillCount = killCount;
+        }
+
+        rankingLines.add(Component.text("========================================", NamedTextColor.DARK_GRAY));
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            player.sendMessage(Component.empty());
+            for (Component line : rankingLines) {
+                player.sendMessage(line);
             }
         }
-        return mvpPlayerIds;
+    }
+
+    private List<Map.Entry<UUID, Integer>> getKillRankingEntries() {
+        List<Map.Entry<UUID, Integer>> entries = new ArrayList<>(eliminatedPiecesByPlayer.entrySet());
+        entries.removeIf(entry -> entry.getValue() <= 0);
+        entries.sort((left, right) -> {
+            int killCompare = Integer.compare(right.getValue(), left.getValue());
+            if (killCompare != 0) {
+                return killCompare;
+            }
+            return resolvePlayerName(left.getKey()).compareToIgnoreCase(resolvePlayerName(right.getKey()));
+        });
+        return entries;
+    }
+
+    private Component createKillRankingLine(int rank, UUID playerId, int killCount) {
+        TeamType teamType = playerTeamMap.get(playerId);
+        NamedTextColor nameColor = teamType == null ? NamedTextColor.WHITE : teamType.getColor();
+        String playerName = resolvePlayerName(playerId);
+        String rankLabel = rank + ".";
+        return Component.text()
+            .append(Component.text(rankLabel + " ", getRankColor(rank)))
+            .append(Component.text(playerName, nameColor))
+            .append(Component.text(createDotLeader(rankLabel, playerName, killCount), NamedTextColor.DARK_GRAY))
+            .append(Component.text(killCount + " KILL", NamedTextColor.YELLOW))
+            .build();
+    }
+
+    private String resolvePlayerName(UUID playerId) {
+        Player onlinePlayer = plugin.getServer().getPlayer(playerId);
+        if (onlinePlayer != null) {
+            return onlinePlayer.getName();
+        }
+
+        OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerId);
+        String playerName = offlinePlayer.getName();
+        return playerName == null ? "알 수 없음" : playerName;
+    }
+
+    private NamedTextColor getRankColor(int rank) {
+        return switch (rank) {
+            case 1 -> NamedTextColor.YELLOW;
+            case 2 -> NamedTextColor.GRAY;
+            case 3 -> NamedTextColor.GOLD;
+            default -> NamedTextColor.GOLD;
+        };
+    }
+
+    private String createDotLeader(String rankLabel, String playerName, int killCount) {
+        int targetWidth = 30;
+        int contentWidth = rankLabel.length() + 1 + playerName.length() + String.valueOf(killCount).length();
+        int dotCount = Math.max(6, targetWidth - contentWidth);
+        return " " + ".".repeat(dotCount) + " ";
     }
 
     private void playResultSound(@Nullable TeamType winner) {
