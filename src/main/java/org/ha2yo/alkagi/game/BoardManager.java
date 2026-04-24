@@ -455,7 +455,7 @@ public final class BoardManager {
 
         updateVelocity(first, newFirstVelocity, velocities);
         updateVelocity(second, newSecondVelocity, velocities);
-        playCollisionSound(first.getLocation());
+        playPieceCollisionSound(first.getLocation());
         return true;
     }
 
@@ -485,7 +485,6 @@ public final class BoardManager {
             pieceData.setLocation(flattenToBoard(flattenedLocation));
 
             if (!arenaData.isInsideBoard(pieceData.getLocation())) {
-                playEliminationSound(pieceData.getLocation());
                 removePiece(pieceData);
                 iterator.remove();
             }
@@ -546,7 +545,7 @@ public final class BoardManager {
                     }
                 }
 
-                playCollisionSound(newLocation);
+                playObstacleCollisionSound(newLocation);
                 return reflectedVelocity;
             }
         }
@@ -558,21 +557,21 @@ public final class BoardManager {
         return Tag.SLABS.isTagged(world.getBlockAt(x, y, z).getType());
     }
 
-    private void playCollisionSound(Location location) {
-        World world = location.getWorld();
-        if (world == null) {
-            return;
-        }
-
-        world.playSound(location, Sound.BLOCK_STONE_HIT, SoundCategory.PLAYERS, 0.7F, 1.6F);
-        world.playSound(location, Sound.BLOCK_AMETHYST_BLOCK_CHIME, SoundCategory.PLAYERS, 0.35F, 1.85F);
-        world.playSound(location, Sound.BLOCK_CALCITE_BREAK, SoundCategory.PLAYERS, 0.45F, 1.15F);
+    private void playPieceCollisionSound(Location location) {
+        playSoundToParticipants(location, Sound.BLOCK_STONE_HIT, 1.15F, 1.6F);
+        playSoundToParticipants(location, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.7F, 1.85F);
+        playSoundToParticipants(location, Sound.BLOCK_CALCITE_BREAK, 0.8F, 1.15F);
     }
 
-    private void playEliminationSound(Location location) {
+    private void playObstacleCollisionSound(Location location) {
+        playSoundToParticipants(location, Sound.BLOCK_ANVIL_LAND, 0.38F, 1.7F);
+        playSoundToParticipants(location, Sound.BLOCK_METAL_HIT, 0.55F, 1.25F);
+        playSoundToParticipants(location, Sound.BLOCK_IRON_TRAPDOOR_CLOSE, 0.3F, 1.6F);
+    }
+
+    private void playSoundToParticipants(Location location, Sound sound, float volume, float pitch) {
         for (org.bukkit.entity.Player player : plugin.getServer().getOnlinePlayers()) {
-            player.playSound(player.getLocation(), Sound.BLOCK_AMETHYST_CLUSTER_BREAK, SoundCategory.PLAYERS, 1.2F, 0.75F);
-            player.playSound(player.getLocation(), Sound.ENTITY_ITEM_BREAK, SoundCategory.PLAYERS, 1.0F, 0.8F);
+            player.playSound(player.getLocation(), sound, SoundCategory.MASTER, volume, pitch);
         }
     }
 

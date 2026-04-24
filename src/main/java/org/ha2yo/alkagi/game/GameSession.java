@@ -641,7 +641,6 @@ public final class GameSession {
         UUID actingPlayerId = player.getUniqueId();
         TeamType targetTeam = teamType.opposite();
         int opponentAliveBefore = teamDataMap.get(targetTeam).getAlivePieceCount();
-        playSoundToParticipants(Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.9F, 1.15F);
         stopTurnTimer();
         boardManager.launchPiece(selectedPiece, targetLocation, teamDataMap, () -> {
             int opponentAliveAfter = teamDataMap.get(targetTeam).getAlivePieceCount();
