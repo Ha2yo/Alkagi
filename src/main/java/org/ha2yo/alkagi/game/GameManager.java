@@ -14,6 +14,8 @@ public final class GameManager {
     private final JavaPlugin plugin;
     private final ArenaData arenaData;
     private final BoardManager boardManager;
+    private final PresetRepository presetRepository;
+    private final PresetEditor presetEditor;
     private final GameSession session;
 
     public GameManager(
@@ -24,6 +26,8 @@ public final class GameManager {
         this.plugin = plugin;
         this.arenaData = arenaData;
         this.boardManager = new BoardManager(plugin, arenaData);
+        this.presetRepository = new PresetRepository(plugin);
+        this.presetEditor = new PresetEditor(arenaData, boardManager, presetRepository);
         this.session = new GameSession(plugin, arenaData, scoreboardManager, boardManager);
     }
 
@@ -45,6 +49,14 @@ public final class GameManager {
             @org.jetbrains.annotations.Nullable Integer playerCount
     ) {
         return session.start(force, pieceCount, playerCount);
+    }
+
+    public boolean startPreset(
+            PresetData presetData,
+            boolean force,
+            @org.jetbrains.annotations.Nullable Integer playerCount
+    ) {
+        return session.startWithPreset(force, presetData, playerCount);
     }
 
     /**
@@ -88,5 +100,13 @@ public final class GameManager {
 
     public BoardManager getBoardManager() {
         return boardManager;
+    }
+
+    public PresetRepository getPresetRepository() {
+        return presetRepository;
+    }
+
+    public PresetEditor getPresetEditor() {
+        return presetEditor;
     }
 }

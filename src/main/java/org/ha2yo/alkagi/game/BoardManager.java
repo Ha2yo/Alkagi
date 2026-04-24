@@ -40,7 +40,6 @@ import java.util.UUID;
  * 말 생성, 배치, 발사, 충돌, 탈락 등 보드 위 물리 처리를 담당한다.
  */
 public final class BoardManager {
-
     private static final NamespacedKey BLACK_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/black");
     private static final NamespacedKey WHITE_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/white");
     private static final String PIECE_ENTITY_MARKER = "piece";
@@ -49,8 +48,9 @@ public final class BoardManager {
     private static final double FRICTION = 0.86D;
     private static final double ROLLING_RESISTANCE = 0.035D;
     private static final double STOP_THRESHOLD = 0.05D;
-    private static final double MAX_POWER = 12.5D;
-    private static final double COLLISION_RESTITUTION = 0.86D;
+    private static final double MAX_POWER = 10.0D;
+    private static final double DEFAULT_PIECE_SIZE = 2.35D;
+    private static final double COLLISION_RESTITUTION = 1.0D;
     private static final double OBSTACLE_RESTITUTION = 0.82D;
     private static final double MAX_SUBSTEP_DISTANCE = 0.18D;
     private static final int COLLISION_SOLVER_ITERATIONS = 3;
@@ -90,16 +90,22 @@ public final class BoardManager {
      * 주어진 위치에 새 말을 배치할 수 있는지 검사한다.
      */
     public boolean canPlacePiece(Location location, Map<TeamType, TeamData> teamDataMap) {
+        return canPlacePiece(location, arenaData.getPieceSize(), teamDataMap);
+    }
+
+    public boolean canPlacePiece(Location location, double pieceSize, Map<TeamType, TeamData> teamDataMap) {
         if (!arenaData.isInsideBoard(location)) {
             return false;
         }
-        if (isBlockedByObstacle(location)) {
+        if (isBlockedByObstacle(location, pieceSize)) {
             return false;
         }
 
+        double placementRadius = getPieceRadius(pieceSize);
         for (TeamData teamData : teamDataMap.values()) {
             for (PieceData piece : teamData.getAlivePieces()) {
-                if (samePlaneDistance(piece.getLocation(), location) < getPlacementDistance()) {
+                double requiredDistance = (placementRadius + getPieceRadius(piece)) * 0.925D;
+                if (samePlaneDistance(piece.getLocation(), location) < requiredDistance) {
                     return false;
                 }
             }
@@ -111,6 +117,10 @@ public final class BoardManager {
      * 말 표시용 엔티티와 선택용 엔티티를 생성하고 PieceData로 묶는다.
      */
     public PieceData spawnPiece(TeamType teamType, int pieceId, Location location) {
+        return spawnPiece(teamType, pieceId, location, arenaData.getPieceSize());
+    }
+
+    public PieceData spawnPiece(TeamType teamType, int pieceId, Location location, double pieceSize) {
         Location spawnLocation = normalizePieceLocation(location);
         World world = spawnLocation.getWorld();
         if (world == null) {
@@ -131,7 +141,8 @@ public final class BoardManager {
 
         Interaction interaction = (Interaction) world.spawnEntity(spawnLocation, EntityType.INTERACTION);
         interaction.setResponsive(true);
-        configureInteractionHitbox(interaction);
+        PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation, pieceSize);
+        configureInteractionHitbox(interaction, pieceData);
         markPieceEntity(interaction);
 
         ItemDisplay display = (ItemDisplay) world.spawnEntity(spawnLocation, EntityType.ITEM_DISPLAY);
@@ -140,10 +151,9 @@ public final class BoardManager {
         display.setBrightness(new Display.Brightness(15, 15));
         display.setInterpolationDuration(1);
         display.setViewRange(256.0F);
-        configurePieceDisplay(display);
+        configurePieceDisplay(display, pieceData);
         markPieceEntity(display);
 
-        PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation);
         pieceData.setEntity(armorStand);
         pieceData.setInteractionEntity(interaction);
         pieceData.setDisplayEntity(display);
@@ -219,11 +229,11 @@ public final class BoardManager {
         for (PieceData piece : pieces) {
             Interaction interaction = piece.getInteractionEntity();
             if (interaction != null) {
-                configureInteractionHitbox(interaction);
+                configureInteractionHitbox(interaction, piece);
             }
             ItemDisplay display = piece.getDisplayEntity();
             if (display != null) {
-                configurePieceDisplay(display);
+                configurePieceDisplay(display, piece);
             }
         }
     }
@@ -291,8 +301,8 @@ public final class BoardManager {
         return normalizedSoftPower * normalizedSoftPower * normalizedSoftPower * softPowerLimit;
     }
 
-    private void configurePieceDisplay(ItemDisplay display) {
-        float pieceSize = (float) arenaData.getPieceSize();
+    private void configurePieceDisplay(ItemDisplay display, PieceData pieceData) {
+        float pieceSize = (float) pieceData.getPieceSize();
         float lift = Math.max(0.10F, pieceSize * 0.18F);
         display.setTransformation(new Transformation(
             new Vector3f(0.0F, lift, 0.0F),
@@ -374,9 +384,9 @@ public final class BoardManager {
             && location.getZ() >= minZ && location.getZ() <= maxZ;
     }
 
-    private void configureInteractionHitbox(Interaction interaction) {
-        interaction.setInteractionWidth((float) getSelectionDiameter());
-        interaction.setInteractionHeight((float) getSelectionHeight());
+    private void configureInteractionHitbox(Interaction interaction, PieceData pieceData) {
+        interaction.setInteractionWidth((float) getSelectionDiameter(pieceData));
+        interaction.setInteractionHeight((float) getSelectionHeight(pieceData));
     }
 
     private void tickPhysics(Map<PieceData, Vector> velocities, Map<TeamType, TeamData> teamDataMap) {
@@ -417,7 +427,7 @@ public final class BoardManager {
         Vector delta = second.getLocation().toVector().subtract(first.getLocation().toVector());
         delta.setY(0.0D);
 
-        double minDistance = getPieceRadius() * 2.0D;
+        double minDistance = getPieceRadius(first) + getPieceRadius(second);
         double distanceSquared = delta.lengthSquared();
         if (distanceSquared >= minDistance * minDistance) {
             return false;
@@ -428,10 +438,8 @@ public final class BoardManager {
             ? new Vector(1.0D, 0.0D, 0.0D)
             : delta.clone().multiply(1.0D / distance);
 
-        double overlap = minDistance - distance;
-        Vector correction = normal.clone().multiply(overlap / 2.0D);
-        first.setLocation(flattenToBoard(first.getLocation().clone().subtract(correction)));
-        second.setLocation(flattenToBoard(second.getLocation().clone().add(correction)));
+        double firstMass = getCollisionMass(first);
+        double secondMass = getCollisionMass(second);
 
         Vector firstVelocity = velocities.getOrDefault(first, new Vector());
         Vector secondVelocity = velocities.getOrDefault(second, new Vector());
@@ -439,14 +447,44 @@ public final class BoardManager {
         double firstAlongNormal = firstVelocity.dot(normal);
         double secondAlongNormal = secondVelocity.dot(normal);
         double relativeAlongNormal = firstAlongNormal - secondAlongNormal;
+
+        double overlap = minDistance - distance;
+
         if (relativeAlongNormal <= 0.0D) {
+            double firstInverseMass = 1.0D / firstMass;
+            double secondInverseMass = 1.0D / secondMass;
+            double totalInverseMass = firstInverseMass + secondInverseMass;
+
+            Vector firstCorrection = normal.clone().multiply(overlap * (firstInverseMass / totalInverseMass));
+            Vector secondCorrection = normal.clone().multiply(overlap * (secondInverseMass / totalInverseMass));
+
+            first.setLocation(flattenToBoard(first.getLocation().clone().subtract(firstCorrection)));
+            second.setLocation(flattenToBoard(second.getLocation().clone().add(secondCorrection)));
             return true;
         }
 
-        double newFirstAlongNormal = ((1.0D - COLLISION_RESTITUTION) * firstAlongNormal
-            + (1.0D + COLLISION_RESTITUTION) * secondAlongNormal) / 2.0D;
-        double newSecondAlongNormal = ((1.0D + COLLISION_RESTITUTION) * firstAlongNormal
-            + (1.0D - COLLISION_RESTITUTION) * secondAlongNormal) / 2.0D;
+        double firstInverseMass = 1.0D / firstMass;
+        double secondInverseMass = 1.0D / secondMass;
+        double totalInverseMass = firstInverseMass + secondInverseMass;
+
+        double firstCorrectionRatio = firstInverseMass / totalInverseMass;
+        double secondCorrectionRatio = secondInverseMass / totalInverseMass;
+
+        Vector firstCorrection = normal.clone().multiply(overlap * firstCorrectionRatio);
+        Vector secondCorrection = normal.clone().multiply(overlap * secondCorrectionRatio);
+
+        first.setLocation(flattenToBoard(first.getLocation().clone().subtract(firstCorrection)));
+        second.setLocation(flattenToBoard(second.getLocation().clone().add(secondCorrection)));
+
+        double totalMass = firstMass + secondMass;
+        double newFirstAlongNormal = (
+            (firstMass - (COLLISION_RESTITUTION * secondMass)) * firstAlongNormal
+                + (1.0D + COLLISION_RESTITUTION) * secondMass * secondAlongNormal
+        ) / totalMass;
+        double newSecondAlongNormal = (
+            (secondMass - (COLLISION_RESTITUTION * firstMass)) * secondAlongNormal
+                + (1.0D + COLLISION_RESTITUTION) * firstMass * firstAlongNormal
+        ) / totalMass;
 
         Vector firstNormalComponent = normal.clone().multiply(firstAlongNormal);
         Vector secondNormalComponent = normal.clone().multiply(secondAlongNormal);
@@ -456,10 +494,31 @@ public final class BoardManager {
         Vector newFirstVelocity = firstTangentComponent.add(normal.clone().multiply(newFirstAlongNormal));
         Vector newSecondVelocity = secondTangentComponent.add(normal.clone().multiply(newSecondAlongNormal));
 
+        boolean firstHitsSecond = firstAlongNormal > 0.0D
+                && Math.abs(firstAlongNormal) >= Math.abs(secondAlongNormal);
+
+        boolean secondHitsFirst = secondAlongNormal < 0.0D
+                && Math.abs(secondAlongNormal) > Math.abs(firstAlongNormal);
+
+        if (firstHitsSecond && firstMass > secondMass) {
+            double penalty = getHeavyToLightImpactPenalty(firstMass, secondMass);
+            newSecondVelocity.multiply(penalty);
+        }
+
+        if (secondHitsFirst && secondMass > firstMass) {
+            double penalty = getHeavyToLightImpactPenalty(secondMass, firstMass);
+            newFirstVelocity.multiply(penalty);
+        }
+
         updateVelocity(first, newFirstVelocity, velocities);
         updateVelocity(second, newSecondVelocity, velocities);
         playPieceCollisionSound(first.getLocation());
         return true;
+    }
+
+    private double getHeavyToLightImpactPenalty(double attackerMass, double targetMass) {
+        double massRatio = attackerMass / targetMass;
+        return Math.max(0.45D, 1.0D / Math.pow(massRatio, 0.25D));
     }
 
     private void movePieces(Map<PieceData, Vector> velocities, double scale) {
@@ -475,7 +534,7 @@ public final class BoardManager {
             Vector stepVelocity = entry.getValue().clone().multiply(scale);
             Location newLocation = pieceData.getLocation().clone().add(stepVelocity);
             Location flattenedLocation = flattenToBoard(newLocation);
-            Vector adjustedVelocity = resolveObstacleCollision(previousLocation, flattenedLocation, entry.getValue().clone());
+            Vector adjustedVelocity = resolveObstacleCollision(previousLocation, flattenedLocation, entry.getValue().clone(), pieceData);
             if (adjustedVelocity != null) {
                 adjustedVelocity.setY(0.0D);
                 if (adjustedVelocity.lengthSquared() < STOP_THRESHOLD * STOP_THRESHOLD) {
@@ -494,13 +553,13 @@ public final class BoardManager {
         }
     }
 
-    private @Nullable Vector resolveObstacleCollision(Location previousLocation, Location newLocation, Vector velocity) {
+    private @Nullable Vector resolveObstacleCollision(Location previousLocation, Location newLocation, Vector velocity, PieceData pieceData) {
         World world = newLocation.getWorld();
         if (world == null) {
             return null;
         }
 
-        double radius = getPieceRadius();
+        double radius = getPieceRadius(pieceData);
         int minBlockX = (int) Math.floor(newLocation.getX() - radius) - 1;
         int maxBlockX = (int) Math.floor(newLocation.getX() + radius) + 1;
         int minBlockZ = (int) Math.floor(newLocation.getZ() - radius) - 1;
@@ -556,13 +615,13 @@ public final class BoardManager {
         return null;
     }
 
-    private boolean isBlockedByObstacle(Location location) {
+    private boolean isBlockedByObstacle(Location location, double pieceSize) {
         World world = location.getWorld();
         if (world == null) {
             return false;
         }
 
-        double radius = getPieceRadius();
+        double radius = getPieceRadius(pieceSize);
         int minBlockX = (int) Math.floor(location.getX() - radius) - 1;
         int maxBlockX = (int) Math.floor(location.getX() + radius) + 1;
         int minBlockZ = (int) Math.floor(location.getZ() - radius) - 1;
@@ -626,7 +685,10 @@ public final class BoardManager {
                 continue;
             }
 
-            double reducedSpeed = (speed * FRICTION) - ROLLING_RESISTANCE;
+            double mass = getCollisionMass(entry.getKey());
+            double massResistance = Math.sqrt(mass);
+
+            double reducedSpeed = (speed * FRICTION) - (ROLLING_RESISTANCE * massResistance);
             if (reducedSpeed <= STOP_THRESHOLD) {
                 iterator.remove();
                 continue;
@@ -680,7 +742,7 @@ public final class BoardManager {
     }
 
     public double getPieceRadius() {
-        return Math.max(0.14D, (arenaData.getPieceSize() * DISPLAY_FOOTPRINT_SCALE) / 2.0D);
+        return getPieceRadius(arenaData.getPieceSize());
     }
 
     public double getPlacementDistance() {
@@ -688,11 +750,40 @@ public final class BoardManager {
     }
 
     public double getSelectionDiameter() {
-        return Math.max(0.42D, arenaData.getPieceSize() * DISPLAY_FOOTPRINT_SCALE * 1.3D);
+        return getSelectionDiameter(arenaData.getPieceSize());
     }
 
     public double getSelectionHeight() {
-        return Math.max(1.0D, arenaData.getPieceSize() * 1.35D);
+        return getSelectionHeight(arenaData.getPieceSize());
+    }
+
+    private double getPieceRadius(PieceData pieceData) {
+        return getPieceRadius(pieceData.getPieceSize());
+    }
+
+    private double getPieceRadius(double pieceSize) {
+        return Math.max(0.14D, (pieceSize * DISPLAY_FOOTPRINT_SCALE) / 2.0D);
+    }
+
+    private double getSelectionDiameter(PieceData pieceData) {
+        return getSelectionDiameter(pieceData.getPieceSize());
+    }
+
+    private double getSelectionDiameter(double pieceSize) {
+        return Math.max(0.42D, pieceSize * DISPLAY_FOOTPRINT_SCALE * 1.3D);
+    }
+
+    private double getSelectionHeight(PieceData pieceData) {
+        return getSelectionHeight(pieceData.getPieceSize());
+    }
+
+    private double getSelectionHeight(double pieceSize) {
+        return Math.max(1.0D, pieceSize * 1.35D);
+    }
+
+    private double getCollisionMass(PieceData pieceData) {
+        double normalizedSize = pieceData.getPieceSize() / DEFAULT_PIECE_SIZE;
+        return Math.max(0.02D, Math.min(40.0D, Math.pow(normalizedSize, 2.0D)));
     }
 
     private void cancelPhysicsTask() {

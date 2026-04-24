@@ -4,6 +4,7 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.entity.Interaction;
@@ -26,6 +27,7 @@ import org.bukkit.util.RayTraceResult;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
 import org.ha2yo.alkagi.game.GameState;
+import org.ha2yo.alkagi.game.PresetEditor;
 import org.ha2yo.alkagi.game.TeamType;
 import org.ha2yo.alkagi.game.model.PieceData;
 
@@ -156,6 +158,12 @@ public final class RemoteGameListener implements Listener {
     public void onInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         GameSession session = gameManager.getSession();
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+
+        if (presetEditor.isEditing(player.getUniqueId()) && player.getInventory().getItemInMainHand().getType() == Material.BLAZE_ROD) {
+            handlePresetEditInteract(event, player, presetEditor);
+            return;
+        }
 
         if (event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK) {
             handleLeftClickInteract(event, player, session);
@@ -227,6 +235,46 @@ public final class RemoteGameListener implements Listener {
 
         event.setCancelled(true);
         sendSelectionCancelledFeedback(player);
+    }
+
+    private void handlePresetEditInteract(PlayerInteractEvent event, Player player, PresetEditor presetEditor) {
+        if (event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK) {
+            if (!presetEditor.removeLastPlacedPiece(player)) {
+                return;
+            }
+
+            event.setCancelled(true);
+            player.sendMessage(Component.text(
+                presetEditor.getSelectedTeam().getDisplayName() + " 마지막 돌을 제거했습니다. "
+                    + presetEditor.getSelectedTeam().getDisplayName() + " 돌 수: "
+                    + presetEditor.getPlacedCount(presetEditor.getSelectedTeam()),
+                NamedTextColor.YELLOW
+            ));
+            return;
+        }
+
+        if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+            return;
+        }
+
+        Location target = gameManager.getArenaData().projectToBoard(
+            player.getEyeLocation(),
+            player.getEyeLocation().getDirection(),
+            REMOTE_TRACE_DISTANCE
+        );
+        if (target == null) {
+            return;
+        }
+        if (!presetEditor.placePiece(player, target)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        TeamType teamType = presetEditor.getSelectedTeam();
+        player.sendMessage(Component.text(
+            teamType.getDisplayName() + " 프리셋 돌 배치: " + presetEditor.getPlacedCount(teamType),
+            teamType.getColor()
+        ));
     }
 
     /**

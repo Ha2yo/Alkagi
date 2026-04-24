@@ -20,15 +20,17 @@ public final class PieceData {
 
     private final int pieceId;
     private final TeamType teamType;
+    private final double pieceSize;
     private Location location;
     private boolean alive;
     private ArmorStand entity;
     private Interaction interactionEntity;
     private ItemDisplay displayEntity;
 
-    public PieceData(int pieceId, TeamType teamType, Location location) {
+    public PieceData(int pieceId, TeamType teamType, Location location, double pieceSize) {
         this.pieceId = pieceId;
         this.teamType = teamType;
+        this.pieceSize = Math.max(0.5D, pieceSize);
         this.location = normalizeLocation(location);
         this.alive = true;
     }
@@ -39,6 +41,10 @@ public final class PieceData {
 
     public TeamType getTeamType() {
         return teamType;
+    }
+
+    public double getPieceSize() {
+        return pieceSize;
     }
 
     public Location getLocation() {

@@ -139,6 +139,13 @@ public final class GameSession {
         return removed;
     }
 
+    private void prepareParticipantsForGame(List<UUID> availableParticipants, int selectedPlayerCount) {
+        List<UUID> selectedParticipants = selectParticipantsForNextGame(availableParticipants, selectedPlayerCount);
+        participants.clear();
+        participants.addAll(selectedParticipants);
+        updateBenchGameStreaks(availableParticipants, selectedParticipants);
+    }
+
     /**
      * 참가자를 확정하고 팀 배정부터 배치 단계 시작까지 초기 게임 흐름을 진행한다.
      */
@@ -168,17 +175,47 @@ public final class GameSession {
             return false;
         }
 
-        List<UUID> selectedParticipants = selectParticipantsForNextGame(availableParticipants, selectedPlayerCount);
-        participants.clear();
-        participants.addAll(selectedParticipants);
-        updateBenchGameStreaks(availableParticipants, selectedParticipants);
-
+        prepareParticipantsForGame(availableParticipants, selectedPlayerCount);
         configuredPieceCount = pieceCount;
         gameState = GameState.TEAM_ASSIGNING;
         assignTeams();
         applySpectatorStateToNonParticipants();
         selectPlacementPlayers();
         startPlacingPhase();
+        return true;
+    }
+
+    public boolean startWithPreset(
+            boolean force,
+            PresetData presetData,
+            @Nullable Integer playerCount
+    ) {
+        syncWaitingParticipants();
+
+        if (gameState != GameState.WAITING || presetData.isEmpty() || !presetData.isBalanced()) {
+            return false;
+        }
+
+        int pieceCount = presetData.getPieceCount();
+        List<UUID> availableParticipants = new ArrayList<>(participants);
+        int selectedPlayerCount = playerCount == null ? availableParticipants.size() : playerCount;
+        if (pieceCount <= 0 || selectedPlayerCount <= 0 || selectedPlayerCount > availableParticipants.size()) {
+            return false;
+        }
+        if (!force && selectedPlayerCount < 2) {
+            return false;
+        }
+        if (!isPresetValid(presetData)) {
+            return false;
+        }
+
+        prepareParticipantsForGame(availableParticipants, selectedPlayerCount);
+        configuredPieceCount = pieceCount;
+        gameState = GameState.TEAM_ASSIGNING;
+        assignTeams();
+        applySpectatorStateToNonParticipants();
+        applyPresetPieces(presetData);
+        startPlayingPhase();
         return true;
     }
 
@@ -526,6 +563,52 @@ public final class GameSession {
 
     public int getPlacedCount(TeamType teamType) {
         return placedCountMap.getOrDefault(teamType, 0);
+    }
+
+    private boolean isPresetValid(PresetData presetData) {
+        EnumMap<TeamType, TeamData> validationTeamDataMap = new EnumMap<>(TeamType.class);
+        for (TeamType teamType : TeamType.values()) {
+            validationTeamDataMap.put(teamType, new TeamData(teamType));
+        }
+
+        for (TeamType teamType : TeamType.values()) {
+            TeamData teamData = validationTeamDataMap.get(teamType);
+            int pieceId = 1;
+            for (PresetData.PresetPiece piece : presetData.getPieces(teamType)) {
+                Location spawnLocation = normalizePlacementLocation(piece.location());
+                if (!boardManager.canPlacePiece(spawnLocation, piece.pieceSize(), validationTeamDataMap)) {
+                    return false;
+                }
+
+                teamData.getPieces().add(new PieceData(pieceId++, teamType, spawnLocation, piece.pieceSize()));
+            }
+        }
+        return true;
+    }
+
+    private void applyPresetPieces(PresetData presetData) {
+        placedCountMap.put(TeamType.BLACK, 0);
+        placedCountMap.put(TeamType.WHITE, 0);
+        for (TeamType teamType : TeamType.values()) {
+            TeamData teamData = teamDataMap.get(teamType);
+            int pieceId = 1;
+            for (PresetData.PresetPiece piece : presetData.getPieces(teamType)) {
+                Location spawnLocation = normalizePlacementLocation(piece.location());
+                teamData.getPieces().add(boardManager.spawnPiece(teamType, pieceId++, spawnLocation, piece.pieceSize()));
+            }
+            placedCountMap.put(teamType, teamData.getAlivePieceCount());
+        }
+    }
+
+    private Location normalizePlacementLocation(Location clickedLocation) {
+        Location spawnLocation = clickedLocation.clone();
+        Location base = arenaData.getBoardPos1();
+        if (base != null) {
+            spawnLocation.setY(base.getY());
+        }
+        spawnLocation.setX(Math.floor(spawnLocation.getX()) + 0.5D);
+        spawnLocation.setZ(Math.floor(spawnLocation.getZ()) + 0.5D);
+        return spawnLocation;
     }
 
     /**
