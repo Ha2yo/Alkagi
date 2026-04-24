@@ -23,6 +23,12 @@ import java.util.UUID;
 public final class AlkagiCommand implements CommandExecutor, TabCompleter {
 
     private static final String ADMIN_PERMISSION = "alkagi.admin";
+    // 안내 메시지와 탭 완성에서 같은 명령 목록을 재사용한다.
+    private static final List<String> SUBCOMMANDS = List.of(
+        "status", "start", "forcestart", "stop", "reset",
+        "setboardpos1", "setboardpos2", "setlobby", "setspectator",
+        "setblackplace", "setwhiteplace", "setturntime", "setpiecesize", "setcontrolradius"
+    );
 
     private final GameManager gameManager;
 
@@ -33,7 +39,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(Component.text("/alkagi status|start|forcestart|stop|reset|setboardpos1|setboardpos2|setlobby|setspectator|setblackplace|setwhiteplace|setturntime|setpiecesize", NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text("/alkagi " + String.join("|", SUBCOMMANDS), NamedTextColor.YELLOW));
             return true;
         }
 
@@ -52,7 +58,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "setwhiteplace" -> handleSetPlacement(sender, TeamType.WHITE);
             case "setturntime" -> handleSetTurnTime(sender, args);
             case "setpiecesize" -> handleSetPieceSize(sender, args);
-            case "setcontrolradius" -> handleSetControlRadius(sender, args);
+            case "setcontrolradius" -> handleSetControlRadius(sender);
             default -> {
                 sender.sendMessage(Component.text("알 수 없는 하위 명령어입니다.", NamedTextColor.RED));
                 yield true;
@@ -60,13 +66,19 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         };
     }
 
+    /**
+     * 현재 게임 상태와 주요 경기 설정을 출력한다.
+     */
     private boolean handleStatus(CommandSender sender) {
         GameSession session = gameManager.getSession();
         sender.sendMessage(Component.text("상태: " + session.getGameState(), NamedTextColor.AQUA));
         sender.sendMessage(Component.text("참가자 수: " + session.getParticipants().size(), NamedTextColor.AQUA));
         sender.sendMessage(Component.text("말 개수: " + session.getConfiguredPieceCount(), NamedTextColor.AQUA));
         sender.sendMessage(Component.text("턴 시간: " + session.getTurnTimeSeconds() + "초", NamedTextColor.AQUA));
-        sender.sendMessage(Component.text("말 크기: " + String.format("%.2f", gameManager.getArenaData().getPieceSize()), NamedTextColor.AQUA));
+        sender.sendMessage(Component.text(
+            "말 크기: " + String.format("%.2f", gameManager.getArenaData().getPieceSize()),
+            NamedTextColor.AQUA
+        ));
         sender.sendMessage(Component.text(
             "조작 반경: "
                 + String.format("%.2f", gameManager.getArenaData().getControlRadius())
@@ -75,25 +87,34 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
                 + ")",
             NamedTextColor.AQUA
         ));
+
         for (Map.Entry<TeamType, UUID> entry : session.getPlacementPlayers().entrySet()) {
             String playerName = "없음";
             Player player = gameManager.getPlugin().getServer().getPlayer(entry.getValue());
             if (player != null) {
                 playerName = player.getName();
             }
-            sender.sendMessage(Component.text(entry.getKey().getDisplayName() + " 배치 담당: " + playerName, entry.getKey().getColor()));
+            sender.sendMessage(Component.text(
+                entry.getKey().getDisplayName() + " 배치 담당: " + playerName,
+                entry.getKey().getColor()
+            ));
         }
         return true;
     }
 
+    /**
+     * 새 게임을 시작한다. force가 true면 경기장 준비 검사를 건너뛴다.
+     */
     private boolean handleStart(CommandSender sender, String[] args, boolean force) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
         if (args.length < 2) {
-            sender.sendMessage(Component.text("/alkagi " + (force ? "forcestart" : "start") + " <count> [players]", NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text(
+                "/alkagi " + (force ? "forcestart" : "start") + " <count> [players]",
+                NamedTextColor.YELLOW
+            ));
             return true;
         }
 
@@ -126,22 +147,33 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         if (!force && !isArenaReady()) {
-            sender.sendMessage(Component.text("로비, 보드, 관전 위치, 흑/백 배치 위치를 먼저 모두 설정해야 합니다.", NamedTextColor.RED));
+            sender.sendMessage(Component.text(
+                "로비, 보드, 관전 위치, 흑/백 배치 위치를 모두 먼저 설정해야 합니다.",
+                NamedTextColor.RED
+            ));
             return true;
         }
 
         if (gameManager.start(count, force, playerCount)) {
             String playerCountText = playerCount == null ? "전체 참가자" : playerCount + "명";
-            sender.sendMessage(Component.text("알까기 게임을 시작했습니다. 팀별 말 개수: " + count + ", 플레이어 수: " + playerCountText, NamedTextColor.GREEN));
+            sender.sendMessage(Component.text(
+                "알까기 게임을 시작했습니다. 팀별 말 개수: " + count + ", 플레이어 수: " + playerCountText,
+                NamedTextColor.GREEN
+            ));
         } else {
-            sender.sendMessage(Component.text("게임을 시작할 수 없습니다. 참가 인원이나 현재 상태를 확인해 주세요.", NamedTextColor.RED));
+            sender.sendMessage(Component.text(
+                "게임을 시작할 수 없습니다. 참가 인원이나 현재 상태를 확인해 주세요.",
+                NamedTextColor.RED
+            ));
         }
         return true;
     }
 
+    /**
+     * 진행 중인 게임을 즉시 중단한다.
+     */
     private boolean handleStop(CommandSender sender) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
@@ -150,9 +182,11 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /**
+     * 현재 게임 상태와 배치된 말을 모두 초기화한다.
+     */
     private boolean handleReset(CommandSender sender) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
@@ -161,9 +195,11 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /**
+     * 보드 영역을 정의하는 두 좌표 중 하나를 저장한다.
+     */
     private boolean handleSetBoard(CommandSender sender, boolean first) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
@@ -173,20 +209,23 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         ArenaData arenaData = gameManager.getArenaData();
+        // 보드의 두 꼭짓점을 따로 저장해 경기 영역을 정의한다.
         if (first) {
             arenaData.setBoardPos1(player.getLocation());
         } else {
             arenaData.setBoardPos2(player.getLocation());
         }
 
-        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
+        saveArenaData();
         sender.sendMessage(Component.text("보드 좌표를 저장했습니다.", NamedTextColor.GREEN));
         return true;
     }
 
+    /**
+     * 대기 및 종료 후 복귀에 사용할 로비 위치를 저장한다.
+     */
     private boolean handleSetLobby(CommandSender sender) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
@@ -196,14 +235,16 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         gameManager.getArenaData().setLobbyLocation(player.getLocation());
-        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
+        saveArenaData();
         sender.sendMessage(Component.text("로비 위치를 저장했습니다.", NamedTextColor.GREEN));
         return true;
     }
 
+    /**
+     * 현재 턴 플레이어를 이동시킬 관전 위치를 저장한다.
+     */
     private boolean handleSetSpectator(CommandSender sender) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
@@ -213,14 +254,16 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         gameManager.getArenaData().setSpectatorLocation(player.getLocation());
-        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
+        saveArenaData();
         sender.sendMessage(Component.text("관전 위치를 저장했습니다.", NamedTextColor.GREEN));
         return true;
     }
 
+    /**
+     * 팀별 말 배치 시작 위치를 저장한다.
+     */
     private boolean handleSetPlacement(CommandSender sender, TeamType teamType) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
 
@@ -230,14 +273,19 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         gameManager.getArenaData().setPlacementLocation(teamType, player.getLocation());
-        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
-        sender.sendMessage(Component.text(teamType.getDisplayName() + " 배치 위치를 저장했습니다.", teamType.getColor()));
+        saveArenaData();
+        sender.sendMessage(Component.text(
+            teamType.getDisplayName() + " 배치 위치를 저장했습니다.",
+            teamType.getColor()
+        ));
         return true;
     }
 
+    /**
+     * 한 턴의 제한 시간을 초 단위로 설정한다.
+     */
     private boolean handleSetTurnTime(CommandSender sender, String[] args) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
         if (args.length < 2) {
@@ -260,14 +308,16 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
 
         gameManager.getArenaData().setTurnTimeSeconds(seconds);
         gameManager.getSession().refreshTurnTimerConfiguration();
-        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
+        saveArenaData();
         sender.sendMessage(Component.text("턴 시간을 " + seconds + "초로 설정했습니다.", NamedTextColor.GREEN));
         return true;
     }
 
+    /**
+     * 말의 표시 크기와 조작 반경 계산 기준이 되는 크기를 설정한다.
+     */
     private boolean handleSetPieceSize(CommandSender sender, String[] args) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        if (!requireAdmin(sender)) {
             return true;
         }
         if (args.length < 2) {
@@ -290,16 +340,23 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
 
         gameManager.getArenaData().setPieceSize(size);
         gameManager.getBoardManager().refreshPieceDisplays();
-        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
-        sender.sendMessage(Component.text("말 크기를 " + String.format("%.2f", gameManager.getArenaData().getPieceSize()) + "로 설정했습니다.", NamedTextColor.GREEN));
+        saveArenaData();
+        sender.sendMessage(Component.text(
+            "말 크기를 " + String.format("%.2f", gameManager.getArenaData().getPieceSize()) + "로 설정했습니다.",
+            NamedTextColor.GREEN
+        ));
         return true;
     }
 
-    private boolean handleSetControlRadius(CommandSender sender, String[] args) {
-        if (!sender.hasPermission(ADMIN_PERMISSION)) {
-            sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+    /**
+     * 조작 반경이 자동 계산된다는 안내 메시지를 출력한다.
+     */
+    private boolean handleSetControlRadius(CommandSender sender) {
+        if (!requireAdmin(sender)) {
             return true;
         }
+
+        // 조작 반경은 별도 설정값 대신 말 크기에서 자동 계산되도록 바뀌었다.
         sender.sendMessage(Component.text(
             "조작 반경은 이제 말 크기에 따라 자동 계산됩니다. /alkagi setpiecesize <size> 를 사용해 주세요.",
             NamedTextColor.YELLOW
@@ -307,16 +364,32 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean requireAdmin(CommandSender sender) {
+        if (sender.hasPermission(ADMIN_PERMISSION)) {
+            return true;
+        }
+
+        sender.sendMessage(Component.text("권한이 없습니다.", NamedTextColor.RED));
+        return false;
+    }
+
+    private void saveArenaData() {
+        // 위치/규칙 설정 변경은 즉시 config.yml에 반영한다.
+        ((AlkagiPlugin) gameManager.getPlugin()).saveArenaData();
+    }
+
     private @Nullable Player requirePlayer(CommandSender sender) {
         if (sender instanceof Player player) {
             return player;
         }
+
         sender.sendMessage(Component.text("플레이어만 사용할 수 있는 명령어입니다.", NamedTextColor.RED));
         return null;
     }
 
     private boolean isArenaReady() {
         ArenaData arenaData = gameManager.getArenaData();
+        // 강제 시작이 아닐 때는 경기 진행에 필요한 핵심 위치가 모두 준비되어 있어야 한다.
         return arenaData.getLobbyLocation() != null
             && arenaData.getBoardPos1() != null
             && arenaData.getBoardPos2() != null
@@ -328,8 +401,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
     @Override
     public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("status", "start", "forcestart", "stop", "reset", "setboardpos1", "setboardpos2", "setlobby", "setspectator", "setblackplace", "setwhiteplace", "setturntime", "setpiecesize")
-                .stream()
+            return SUBCOMMANDS.stream()
                 .filter(option -> option.startsWith(args[0].toLowerCase()))
                 .toList();
         }
