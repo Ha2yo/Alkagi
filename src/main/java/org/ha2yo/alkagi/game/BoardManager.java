@@ -282,13 +282,27 @@ public final class BoardManager {
         Location clampedTarget = clampLaunchTarget(selectedPiece, targetLocation);
         Vector direction = selectedPiece.getLocation().toVector().subtract(clampedTarget.toVector());
         direction.setY(0.0D);
+
         if (direction.lengthSquared() <= 0.0001D) {
             return new Vector();
         }
 
         double normalizedDistance = Math.min(direction.length() / getLaunchControlRadius(), 1.0D);
         double power = applyLaunchPowerCurve(normalizedDistance * MAX_POWER);
-        return direction.normalize().multiply(power);
+
+        double sizePenalty = getLaunchSizePenalty(selectedPiece);
+
+        return direction.normalize().multiply(power * sizePenalty);
+    }
+
+    private double getLaunchSizePenalty(PieceData pieceData) {
+        double sizeRatio = pieceData.getPieceSize() / DEFAULT_PIECE_SIZE;
+
+        if (sizeRatio <= 1.0D) {
+            return 1.0D;
+        }
+
+        return Math.max(0.45D, 1.0D / Math.pow(sizeRatio, 0.2D));
     }
 
     private double applyLaunchPowerCurve(double linearPower) {
@@ -547,6 +561,7 @@ public final class BoardManager {
             pieceData.setLocation(flattenToBoard(flattenedLocation));
 
             if (!arenaData.isInsideBoard(pieceData.getLocation())) {
+                playPieceFallSound(pieceData.getLocation());
                 removePiece(pieceData);
                 iterator.remove();
             }
@@ -669,6 +684,10 @@ public final class BoardManager {
         playSoundToParticipants(location, Sound.BLOCK_IRON_TRAPDOOR_CLOSE, 0.3F, 1.6F);
     }
 
+    private void playPieceFallSound(Location location) {
+        playSoundToParticipants(location, Sound.BLOCK_GLASS_BREAK, 0.55F, 0.95F);
+    }
+
     private void playSoundToParticipants(Location location, Sound sound, float volume, float pitch) {
         for (org.bukkit.entity.Player player : plugin.getServer().getOnlinePlayers()) {
             player.playSound(player.getLocation(), sound, SoundCategory.MASTER, volume, pitch);
@@ -770,7 +789,7 @@ public final class BoardManager {
     }
 
     private double getSelectionDiameter(double pieceSize) {
-        return Math.max(0.42D, pieceSize * DISPLAY_FOOTPRINT_SCALE * 1.3D);
+        return Math.max(0.34D, pieceSize * DISPLAY_FOOTPRINT_SCALE * 1.02D);
     }
 
     private double getSelectionHeight(PieceData pieceData) {
@@ -778,7 +797,7 @@ public final class BoardManager {
     }
 
     private double getSelectionHeight(double pieceSize) {
-        return Math.max(1.0D, pieceSize * 1.35D);
+        return Math.max(0.72D, pieceSize * 0.95D);
     }
 
     private double getCollisionMass(PieceData pieceData) {

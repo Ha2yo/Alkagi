@@ -530,6 +530,10 @@ public final class GameSession {
         return Map.copyOf(placementPlayers);
     }
 
+    public @Nullable TeamType getPlayerTeam(UUID playerId) {
+        return playerTeamMap.get(playerId);
+    }
+
     public GameState getGameState() {
         return gameState;
     }
@@ -565,6 +569,89 @@ public final class GameSession {
 
     public int getPlacedCount(TeamType teamType) {
         return placedCountMap.getOrDefault(teamType, 0);
+    }
+
+    public int getAlivePieceCount(TeamType teamType) {
+        TeamData teamData = teamDataMap.get(teamType);
+        return teamData == null ? 0 : teamData.getAlivePieceCount();
+    }
+
+    public int getRemainingTurnSeconds() {
+        return remainingTurnSeconds;
+    }
+
+    public String getPlayerTeamStatusText(UUID playerId) {
+        TeamType teamType = playerTeamMap.get(playerId);
+        if (teamType == TeamType.BLACK) {
+            return "흑팀입니다";
+        }
+        if (teamType == TeamType.WHITE) {
+            return "백팀입니다";
+        }
+        return "관전 중입니다";
+    }
+
+    public String getTurnStatusText(UUID playerId) {
+        if (gameState != GameState.PLAYING) {
+            return "대기 중입니다";
+        }
+        if (currentTurnPlayer != null && currentTurnPlayer.equals(playerId)) {
+            return "지금 당신 차례입니다";
+        }
+
+        TeamType teamType = playerTeamMap.get(playerId);
+        if (teamType == null) {
+            return "관전 중입니다";
+        }
+
+        TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
+        TeamData oppositeTeamData = teamDataMap.get(currentTurnTeam.opposite());
+        int turnsRemaining = calculateTurnsRemaining(
+            playerId,
+            teamType,
+            currentTeamData.getTurnQueueSnapshot(),
+            oppositeTeamData.getTurnQueueSnapshot()
+        );
+        if (turnsRemaining < 0) {
+            return "턴 순서를 계산 중입니다";
+        }
+        return "내 차례까지 " + turnsRemaining + "턴 남음";
+    }
+
+    public String getCurrentTurnDisplayText() {
+        Player currentPlayer = currentTurnPlayer == null ? null : plugin.getServer().getPlayer(currentTurnPlayer);
+        String playerName = currentPlayer == null ? "대기 중" : currentPlayer.getName();
+        return (currentTurnTeam == TeamType.BLACK ? "흑" : "백") + " - " + playerName;
+    }
+
+    public void copyTabTeams(Scoreboard targetScoreboard) {
+        org.bukkit.scoreboard.ScoreboardManager scoreboardManager = Bukkit.getScoreboardManager();
+        if (scoreboardManager == null) {
+            return;
+        }
+
+        Scoreboard mainScoreboard = scoreboardManager.getMainScoreboard();
+        for (String teamName : List.of(TAB_TEAM_BLACK, TAB_TEAM_WHITE, TAB_TEAM_SPECTATOR)) {
+            Team mainTeam = mainScoreboard.getTeam(teamName);
+            if (mainTeam == null) {
+                continue;
+            }
+
+            Team targetTeam = targetScoreboard.getTeam(teamName);
+            if (targetTeam == null) {
+                targetTeam = targetScoreboard.registerNewTeam(teamName);
+            }
+            targetTeam.color(switch (teamName) {
+                case TAB_TEAM_BLACK -> TeamType.BLACK.getColor();
+                case TAB_TEAM_WHITE -> TeamType.WHITE.getColor();
+                default -> DEFAULT_PLAYER_COLOR;
+            });
+            targetTeam.prefix(mainTeam.prefix());
+            targetTeam.suffix(mainTeam.suffix());
+            for (String entry : mainTeam.getEntries()) {
+                targetTeam.addEntry(entry);
+            }
+        }
     }
 
     private boolean isPresetValid(PresetData presetData) {
@@ -779,11 +866,19 @@ public final class GameSession {
             return;
         }
 
-        Scoreboard scoreboard = scoreboardManager.getMainScoreboard();
         String entry = player.getName();
+        Scoreboard mainScoreboard = scoreboardManager.getMainScoreboard();
+        syncPlayerTabTeam(mainScoreboard, entry, teamType);
+
+        Scoreboard playerScoreboard = player.getScoreboard();
+        if (playerScoreboard != mainScoreboard) {
+            syncPlayerTabTeam(playerScoreboard, entry, teamType);
+        }
+    }
+
+    private void syncPlayerTabTeam(Scoreboard scoreboard, String entry, @Nullable TeamType teamType) {
         removeEntryFromTabTeams(scoreboard, entry);
         getOrCreateTabTeam(scoreboard, teamType).addEntry(entry);
-        player.setScoreboard(scoreboard);
     }
 
     private void removeEntryFromTabTeams(Scoreboard scoreboard, String entry) {
@@ -871,6 +966,7 @@ public final class GameSession {
         int turnTimeSeconds = getTurnTimeSeconds();
         turnTimerBar.setProgress(Math.max(0.0D, Math.min(1.0D, remainingTurnSeconds / (double) turnTimeSeconds)));
         turnTimerBar.setColor(remainingTurnSeconds <= Math.max(5, turnTimeSeconds / 6) ? BarColor.RED : remainingTurnSeconds <= Math.max(10, turnTimeSeconds / 3) ? BarColor.YELLOW : BarColor.GREEN);
+        scoreboardManager.updateGameBoard(this);
     }
 
     private void handleTurnTimeout(@Nullable UUID timedOutPlayerId) {
@@ -1049,13 +1145,11 @@ public final class GameSession {
             return Component.empty();
         }
 
-        int eliminatedCount = eliminatedPiecesByPlayer.getOrDefault(topKillerId, 0);
         TeamType teamType = playerTeamMap.get(topKillerId);
         NamedTextColor color = teamType == null ? NamedTextColor.AQUA : teamType.getColor();
         return Component.text()
             .append(Component.text("MVP: ", NamedTextColor.YELLOW))
             .append(Component.text(resolvePlayerName(topKillerId), color))
-            .append(Component.text(" (" + eliminatedCount + "개)", NamedTextColor.WHITE))
             .build();
     }
 
@@ -1300,41 +1394,11 @@ public final class GameSession {
             }
 
             player.setGlowing(currentTurnPlayer != null && currentTurnPlayer.equals(participantId));
-            sendTurnStatusActionBar(player);
         }
     }
 
     public void sendTurnStatusActionBar(Player player) {
-        if (gameState != GameState.PLAYING) {
-            return;
-        }
-
-        if (currentTurnPlayer != null && currentTurnPlayer.equals(player.getUniqueId())) {
-            player.sendActionBar(createActionBarMessage("지금 당신 차례입니다.", NamedTextColor.YELLOW));
-            return;
-        }
-
-        TeamType teamType = playerTeamMap.get(player.getUniqueId());
-        if (teamType == null) {
-            player.sendActionBar(createActionBarMessage("관전 중", NamedTextColor.GRAY));
-            return;
-        }
-
-        TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
-        TeamData oppositeTeamData = teamDataMap.get(currentTurnTeam.opposite());
-        int turnsRemaining = calculateTurnsRemaining(
-            player.getUniqueId(),
-            teamType,
-            currentTeamData.getTurnQueueSnapshot(),
-            oppositeTeamData.getTurnQueueSnapshot()
-        );
-
-        if (turnsRemaining < 0) {
-            player.sendActionBar(createActionBarMessage("턴 순서를 계산 중입니다.", NamedTextColor.GRAY));
-            return;
-        }
-
-        player.sendActionBar(createActionBarMessage("내 차례까지 " + turnsRemaining + "턴 남음", NamedTextColor.YELLOW));
+        // Turn status is now rendered on the sidebar scoreboard instead of the action bar.
     }
 
     private void showCurrentTurnTitle(Player player) {
@@ -1348,16 +1412,6 @@ public final class GameSession {
     private String formatTeamDisplayName(TeamType teamType) {
         String name = teamType.getDisplayName();
         return name.endsWith("팀") ? name : name + "팀";
-    }
-
-    private Component createActionBarMessage(String statusText, NamedTextColor statusColor) {
-        return Component.text()
-            .append(Component.text("흑 " + teamDataMap.get(TeamType.BLACK).getAlivePieceCount(), TeamType.BLACK.getColor()))
-            .append(Component.text(" vs ", NamedTextColor.DARK_GRAY))
-            .append(Component.text("백 " + teamDataMap.get(TeamType.WHITE).getAlivePieceCount(), TeamType.WHITE.getColor()))
-            .append(Component.text(" | ", NamedTextColor.DARK_GRAY))
-            .append(Component.text(statusText, statusColor))
-            .build();
     }
 
     private int calculateTurnsRemaining(UUID participantId, TeamType teamType, List<UUID> currentQueue, List<UUID> oppositeQueue) {

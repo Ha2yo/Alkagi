@@ -121,7 +121,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length < 2) {
             sender.sendMessage(Component.text(
-                "/alkagi " + (force ? "forcestart" : "start") + " <말개수> [플레이어수] 또는 <프리셋이름> <플레이어수>",
+                "/alkagi " + (force ? "forcestart" : "start") + " <말개수> [플레이어수] 또는 <프리셋이름> [플레이어수]",
                 NamedTextColor.YELLOW
             ));
             return true;
@@ -155,11 +155,13 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         if (gameManager.start(count, force, playerCount)) {
-            String playerCountText = playerCount == null ? "전체 참가자" : playerCount + "명";
-            sender.sendMessage(Component.text(
-                "알까기 게임을 시작했습니다. 팀별 말 개수: " + count + ", 플레이어 수: " + playerCountText,
+            Component startMessage = Component.text(
+                "자유모드 선택, 인원: "
+                    + (playerCount == null ? gameManager.getSession().getParticipants().size() : playerCount)
+                    + "명",
                 NamedTextColor.GREEN
-            ));
+            );
+            gameManager.getPlugin().getServer().broadcast(startMessage);
         } else {
             sender.sendMessage(Component.text("게임을 시작할 수 없습니다. 참가 인원이나 현재 상태를 확인해 주세요.", NamedTextColor.RED));
         }
@@ -167,9 +169,9 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean handlePresetStart(CommandSender sender, String[] args, boolean force) {
-        if (args.length < 3) {
+        if (args.length < 2) {
             sender.sendMessage(Component.text(
-                "/alkagi " + (force ? "forcestart" : "start") + " <프리셋이름> <플레이어수>",
+                "/alkagi " + (force ? "forcestart" : "start") + " <프리셋이름> [플레이어수]",
                 NamedTextColor.YELLOW
             ));
             return true;
@@ -182,10 +184,13 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        int playerCount = parseInt(args[2], -1);
-        if (playerCount <= 0) {
-            sender.sendMessage(Component.text("플레이어 수는 1 이상의 숫자여야 합니다.", NamedTextColor.RED));
-            return true;
+        Integer playerCount = null;
+        if (args.length >= 3) {
+            playerCount = parseInt(args[2], -1);
+            if (playerCount <= 0) {
+                sender.sendMessage(Component.text("플레이어 수는 1 이상의 숫자여야 합니다.", NamedTextColor.RED));
+                return true;
+            }
         }
         if (!force && !isPresetArenaReady()) {
             sender.sendMessage(Component.text("로비, 보드, 관전 위치를 먼저 설정해야 프리셋 게임을 시작할 수 있습니다.", NamedTextColor.RED));
@@ -193,11 +198,13 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         if (gameManager.startPreset(presetData, force, playerCount)) {
-            sender.sendMessage(Component.text(
-                "프리셋 " + presetName + " 으로 게임을 시작했습니다. 팀별 말 개수: " + presetData.getPieceCount()
-                    + ", 플레이어 수: " + playerCount + "명",
+            Component startMessage = Component.text(
+                presetName + " 선택, 인원: "
+                    + (playerCount == null ? gameManager.getSession().getParticipants().size() : playerCount)
+                    + "명",
                 NamedTextColor.GREEN
-            ));
+            );
+            gameManager.getPlugin().getServer().broadcast(startMessage);
         } else {
             sender.sendMessage(Component.text("프리셋 게임을 시작할 수 없습니다. 프리셋 좌표나 현재 상태를 확인해 주세요.", NamedTextColor.RED));
         }
