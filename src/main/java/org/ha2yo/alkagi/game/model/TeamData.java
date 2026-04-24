@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 팀 소속 플레이어, 턴 순서, 말 목록을 보관한다.
+ * 팀 소속 플레이어, 턴 순서, 말 목록을 함께 보관한다.
  */
 public final class TeamData {
 
@@ -30,6 +30,9 @@ public final class TeamData {
         return List.copyOf(players);
     }
 
+    /**
+     * 팀에 플레이어를 추가하고 턴 대기열에도 함께 등록한다.
+     */
     public void addPlayer(UUID playerId) {
         if (!players.contains(playerId)) {
             players.add(playerId);
@@ -37,6 +40,9 @@ public final class TeamData {
         }
     }
 
+    /**
+     * 팀 목록과 턴 대기열에서 플레이어를 제거한다.
+     */
     public void removePlayer(UUID playerId) {
         players.remove(playerId);
         turnQueue.removeIf(id -> id.equals(playerId));
@@ -46,6 +52,9 @@ public final class TeamData {
         return turnQueue.pollFirst();
     }
 
+    /**
+     * 턴을 마친 플레이어를 대기열 뒤로 다시 보낸다.
+     */
     public void pushBackPlayer(UUID playerId) {
         if (players.contains(playerId)) {
             turnQueue.addLast(playerId);

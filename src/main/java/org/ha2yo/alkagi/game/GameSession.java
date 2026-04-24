@@ -41,7 +41,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 참가자, 팀, 턴, 배치, 종료까지 한 판의 상태를 관리한다.
+ * 참가, 팀 배정, 배치, 턴 진행, 종료까지 게임 세션 전체 상태를 관리한다.
  */
 public final class GameSession {
 
@@ -138,6 +138,9 @@ public final class GameSession {
         return removed;
     }
 
+    /**
+     * 참가자를 확정하고 팀 배정부터 배치 단계 시작까지 초기 게임 흐름을 진행한다.
+     */
     public boolean start(
             boolean force,
             int pieceCount,
@@ -178,6 +181,9 @@ public final class GameSession {
         return true;
     }
 
+    /**
+     * 진행 중인 게임을 종료 상태로 전환하고 잠시 뒤 전체 상태를 리셋한다.
+     */
     public void stop() {
         stopTurnTimer();
         stopGameMusic();
@@ -187,6 +193,9 @@ public final class GameSession {
         resetAfterDelay();
     }
 
+    /**
+     * 게임 상태, 말, 플레이어 장비와 표시 정보를 모두 대기 상태로 되돌린다.
+     */
     public void reset() {
         stopTurnTimer();
         stopGameMusic();
@@ -231,6 +240,9 @@ public final class GameSession {
         scoreboardManager.clearAll();
     }
 
+    /**
+     * 현재 참가자들을 섞어서 흑팀과 백팀으로 균형 있게 나눈다.
+     */
     public void assignTeams() {
         playerTeamMap.clear();
         teamDataMap.values().forEach(TeamData::clearPlayers);
@@ -267,6 +279,9 @@ public final class GameSession {
         }
     }
 
+    /**
+     * 각 팀에서 말 배치를 담당할 플레이어 한 명씩을 뽑는다.
+     */
     public void selectPlacementPlayers() {
         placementPlayers.clear();
         for (TeamType teamType : TeamType.values()) {
@@ -279,6 +294,9 @@ public final class GameSession {
         }
     }
 
+    /**
+     * 배치 담당 플레이어에게 리모컨을 지급하고 말 배치 단계를 시작한다.
+     */
     public void startPlacingPhase() {
         gameState = GameState.PLACING;
         placedCountMap.put(TeamType.BLACK, 0);
@@ -308,6 +326,9 @@ public final class GameSession {
         }
     }
 
+    /**
+     * 모든 참가자를 플레이 조작 상태로 전환하고 실제 턴 진행을 시작한다.
+     */
     public void startPlayingPhase() {
         gameState = GameState.PLAYING;
         for (UUID participantId : participants) {
@@ -324,6 +345,9 @@ public final class GameSession {
         decideOpeningTeam();
     }
 
+    /**
+     * 현재 팀의 다음 플레이어를 찾아 새 턴을 시작한다.
+     */
     public void startNextTurn() {
         if (gameState != GameState.PLAYING) {
             return;
@@ -355,11 +379,14 @@ public final class GameSession {
             giveRemoteController(player);
             showCurrentTurnTitle(player);
             player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 1.0F, 1.35F);
-            player.sendMessage(Component.text("지금 당신 차례입니다. 블레이즈 막대를 사용해 말을 우클릭해 주세요.", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text("지금 당신 차례입니다. 블레이즈 막대로 말을 우클릭해 주세요.", NamedTextColor.YELLOW));
         }
         startTurnTimer();
     }
 
+    /**
+     * 현재 턴을 마감하고 승패를 확인한 뒤 다음 턴 또는 게임 종료로 넘어간다.
+     */
     public void endTurn() {
         if (gameState != GameState.PLAYING || currentTurnPlayer == null) {
             return;
@@ -386,6 +413,9 @@ public final class GameSession {
         startNextTurn();
     }
 
+    /**
+     * 현재 살아남은 말 수를 기준으로 승리 팀을 판정한다.
+     */
     public @Nullable TeamType checkWinner() {
         if (teamDataMap.get(TeamType.BLACK).getAlivePieceCount() <= 0 && configuredPieceCount > 0) {
             return TeamType.WHITE;
@@ -402,6 +432,9 @@ public final class GameSession {
             && teamDataMap.get(TeamType.WHITE).getAlivePieceCount() <= 0;
     }
 
+    /**
+     * 승자 정보를 알리고 결과 화면을 보여 준 뒤 게임을 정리한다.
+     */
     public void endGame(
             @Nullable TeamType winner
     ) {
@@ -415,6 +448,9 @@ public final class GameSession {
         resetAfterDelay();
     }
 
+    /**
+     * 게임 중 오프라인이 된 플레이어를 참가 목록과 턴 흐름에서 제거한다.
+     */
     public void removeOfflinePlayer(
             UUID playerId
     ) {
@@ -490,6 +526,9 @@ public final class GameSession {
         return placedCountMap.getOrDefault(teamType, 0);
     }
 
+    /**
+     * 배치 단계에서 팀 담당 플레이어가 보드 위에 말을 하나 배치한다.
+     */
     public boolean placePiece(
             Player player,
             Location clickedLocation
@@ -534,6 +573,9 @@ public final class GameSession {
         return true;
     }
 
+    /**
+     * 현재 턴 플레이어가 자기 팀 말을 선택 상태로 만든다.
+     */
     public @Nullable PieceData selectPiece(
             Player player,
             UUID entityId
@@ -554,6 +596,9 @@ public final class GameSession {
         return pieceData;
     }
 
+    /**
+     * 현재 선택된 말을 취소하고 다시 선택 대기 상태로 돌린다.
+     */
     public boolean cancelSelectedPiece(
             Player player
     ) {
@@ -572,6 +617,9 @@ public final class GameSession {
         return true;
     }
 
+    /**
+     * 선택된 말을 목표 지점을 향해 발사하고 물리 처리 종료 후 턴을 넘긴다.
+     */
     public boolean launchSelectedPiece(
             Player player,
             Location targetLocation
@@ -614,6 +662,9 @@ public final class GameSession {
         return playerTeamMap.get(playerId);
     }
 
+    /**
+     * 플레이어 이름 색과 탭 팀을 현재 소속 팀 기준으로 갱신한다.
+     */
     public void refreshPlayerFormatting(Player player) {
         TeamType teamType = playerTeamMap.get(player.getUniqueId());
         NamedTextColor color = teamType == null ? DEFAULT_PLAYER_COLOR : teamType.getColor();
@@ -622,6 +673,9 @@ public final class GameSession {
         assignPlayerToTabTeam(player, teamType);
     }
 
+    /**
+     * 모든 온라인 플레이어의 이름색과 탭 정렬을 다시 갱신한다.
+     */
     public void refreshAllPlayerFormatting() {
         for (Player player : plugin.getServer().getOnlinePlayers()) {
             refreshPlayerFormatting(player);
@@ -664,6 +718,9 @@ public final class GameSession {
         return team;
     }
 
+    /**
+     * 이미 진행 중인 턴 타이머를 새로 들어온 플레이어에게도 보여 준다.
+     */
     public void refreshTurnTimerViewer(Player player) {
         if (turnTimerTask == null || !turnTimerBar.isVisible()) {
             return;
@@ -735,10 +792,16 @@ public final class GameSession {
         endTurn();
     }
 
+    /**
+     * 현재 적용 중인 턴 제한 시간을 반환한다.
+     */
     public int getTurnTimeSeconds() {
         return arenaData.getTurnTimeSeconds();
     }
 
+    /**
+     * 턴 시간 설정이 바뀌었을 때 현재 진행 중인 타이머에 즉시 반영한다.
+     */
     public void refreshTurnTimerConfiguration() {
         if (gameState == GameState.PLAYING && currentTurnPlayer != null && !boardManager.isActionRunning()) {
             startTurnTimer();
@@ -829,7 +892,7 @@ public final class GameSession {
 
         showTitleToParticipants(
             Component.text(previewTeam.getDisplayName(), previewTeam.getColor()),
-            Component.text("선공 팀 추첨 중...", NamedTextColor.YELLOW),
+                Component.text("선공 팀 추첨 중...", NamedTextColor.YELLOW),
             Duration.ofMillis(0),
             Duration.ofMillis(250),
             Duration.ofMillis(150)
@@ -886,32 +949,6 @@ public final class GameSession {
         playResultSound(winner);
     }
 
-    private Component createMvpSubtitle() {
-        @Nullable UUID mvpPlayerId = getMvpPlayerId();
-        if (mvpPlayerId == null) {
-            return Component.empty();
-        }
-
-        int eliminatedCount = eliminatedPiecesByPlayer.getOrDefault(mvpPlayerId, 0);
-        Player mvpPlayer = plugin.getServer().getPlayer(mvpPlayerId);
-        String playerName = mvpPlayer == null ? "알 수 없음" : mvpPlayer.getName();
-        TeamType teamType = playerTeamMap.get(mvpPlayerId);
-        NamedTextColor color = teamType == null ? NamedTextColor.AQUA : teamType.getColor();
-        return Component.text("MVP: " + playerName + " (" + eliminatedCount + "킬)", color);
-    }
-
-    private @Nullable UUID getMvpPlayerId() {
-        UUID mvpPlayerId = null;
-        int maxEliminatedCount = 0;
-        for (Map.Entry<UUID, Integer> entry : eliminatedPiecesByPlayer.entrySet()) {
-            if (entry.getValue() > maxEliminatedCount) {
-                maxEliminatedCount = entry.getValue();
-                mvpPlayerId = entry.getKey();
-            }
-        }
-        return mvpPlayerId;
-    }
-
     private Component createSharedMvpSubtitle() {
         List<UUID> mvpPlayerIds = getSharedMvpPlayerIds();
         if (mvpPlayerIds.isEmpty()) {
@@ -934,7 +971,7 @@ public final class GameSession {
             subtitle.append(Component.text(playerName, color));
         }
 
-        subtitle.append(Component.text(" (" + eliminatedCount + "킬)", NamedTextColor.WHITE));
+        subtitle.append(Component.text(" (" + eliminatedCount + "개)", NamedTextColor.WHITE));
         return subtitle.build();
     }
 
@@ -1147,7 +1184,7 @@ public final class GameSession {
 
     private void showCurrentTurnTitle(Player player) {
         player.showTitle(Title.title(
-            Component.text("당신의 차례입니다.", NamedTextColor.YELLOW),
+            Component.text("당신의 차례입니다", NamedTextColor.YELLOW),
             Component.empty(),
             Title.Times.times(Duration.ofMillis(200), Duration.ofSeconds(2), Duration.ofMillis(300))
         ));
@@ -1156,41 +1193,6 @@ public final class GameSession {
     private String formatTeamDisplayName(TeamType teamType) {
         String name = teamType.getDisplayName();
         return name.endsWith("팀") ? name : name + "팀";
-    }
-
-    private void updateTurnIndicators() {
-        TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
-        TeamData oppositeTeamData = teamDataMap.get(currentTurnTeam.opposite());
-        List<UUID> currentQueue = currentTeamData.getTurnQueueSnapshot();
-        List<UUID> oppositeQueue = oppositeTeamData.getTurnQueueSnapshot();
-
-        for (UUID participantId : participants) {
-            Player player = plugin.getServer().getPlayer(participantId);
-            if (player == null) {
-                continue;
-            }
-
-            boolean isCurrentPlayer = currentTurnPlayer != null && currentTurnPlayer.equals(participantId);
-            player.setGlowing(isCurrentPlayer);
-            if (isCurrentPlayer) {
-                player.sendActionBar(createActionBarMessage("지금 당신 차례입니다.", NamedTextColor.GOLD));
-                continue;
-            }
-
-            TeamType teamType = playerTeamMap.get(participantId);
-            if (teamType == null) {
-                player.sendActionBar(createActionBarMessage("관전 중", NamedTextColor.GRAY));
-                continue;
-            }
-
-            int turnsRemaining = calculateTurnsRemaining(participantId, teamType, currentQueue, oppositeQueue);
-            if (turnsRemaining < 0) {
-                player.sendActionBar(createActionBarMessage("순서를 계산하는 중입니다.", NamedTextColor.GRAY));
-                continue;
-            }
-
-            player.sendActionBar(createActionBarMessage("내 차례까지 " + turnsRemaining + "턴 남음", NamedTextColor.YELLOW));
-        }
     }
 
     private Component createActionBarMessage(String statusText, NamedTextColor statusColor) {
@@ -1273,10 +1275,16 @@ public final class GameSession {
         player.removePotionEffect(PotionEffectType.SPEED);
     }
 
+    /**
+     * 플레이어가 현재 리모컨 아이템을 들고 있는지 확인한다.
+     */
     public boolean isUsingRemoteController(Player player) {
         return isRemoteController(player.getInventory().getItemInMainHand());
     }
 
+    /**
+     * 아이템이 알까기 리모컨인지 판별한다.
+     */
     public boolean isRemoteController(@Nullable ItemStack item) {
         if (item == null || item.getType() != Material.BLAZE_ROD || !item.hasItemMeta()) {
             return false;
@@ -1293,6 +1301,9 @@ public final class GameSession {
         );
     }
 
+    /**
+     * 아이템이 팀 전용 보호 장비인지 판별한다.
+     */
     public boolean isTeamArmor(@Nullable ItemStack item) {
         if (item == null || !item.hasItemMeta()) {
             return false;
@@ -1372,6 +1383,9 @@ public final class GameSession {
         return item;
     }
 
+    /**
+     * 비참가 플레이어를 관전자처럼 보이도록 비행 및 은신 상태로 전환한다.
+     */
     public void applySpectatorState(Player player) {
         if (playerTeamMap.get(player.getUniqueId()) != null) {
             return;
@@ -1387,6 +1401,9 @@ public final class GameSession {
         player.addPotionEffect(SPECTATOR_INVISIBILITY_EFFECT);
     }
 
+    /**
+     * 관전자 보조 상태를 해제하고 일반 플레이어 상태로 돌린다.
+     */
     public void clearSpectatorState(Player player) {
         player.removePotionEffect(PotionEffectType.INVISIBILITY);
         if (playerTeamMap.get(player.getUniqueId()) != null) {

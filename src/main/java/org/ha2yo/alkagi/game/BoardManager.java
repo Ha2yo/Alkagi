@@ -37,7 +37,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 알까기 말 생성, 배치, 발사, 충돌, 낙하 처리를 담당한다.
+ * 말 생성, 배치, 발사, 충돌, 탈락 등 보드 위 물리 처리를 담당한다.
  */
 public final class BoardManager {
 
@@ -72,6 +72,9 @@ public final class BoardManager {
         return actionRunning;
     }
 
+    /**
+     * 현재 세션에서 관리하던 말과 물리 상태를 모두 정리한다.
+     */
     public void clearSessionPieces(Map<TeamType, TeamData> teamDataMap) {
         cancelPhysicsTask();
         actionRunning = false;
@@ -83,6 +86,9 @@ public final class BoardManager {
         }
     }
 
+    /**
+     * 주어진 위치에 새 말을 배치할 수 있는지 검사한다.
+     */
     public boolean canPlacePiece(Location location, Map<TeamType, TeamData> teamDataMap) {
         if (!arenaData.isInsideBoard(location)) {
             return false;
@@ -98,6 +104,9 @@ public final class BoardManager {
         return true;
     }
 
+    /**
+     * 말 표시용 엔티티와 선택용 엔티티를 생성하고 PieceData로 묶는다.
+     */
     public PieceData spawnPiece(TeamType teamType, int pieceId, Location location) {
         Location spawnLocation = normalizePieceLocation(location);
         World world = spawnLocation.getWorld();
@@ -170,6 +179,9 @@ public final class BoardManager {
         pieceData.setAlive(false);
     }
 
+    /**
+     * 선택된 말을 발사하고 물리 시뮬레이션이 끝나면 후속 작업을 실행한다.
+     */
     public void launchPiece(PieceData selectedPiece, Location targetLocation, Map<TeamType, TeamData> teamDataMap, Runnable onFinished) {
         if (actionRunning) {
             return;
@@ -213,6 +225,9 @@ public final class BoardManager {
         }
     }
 
+    /**
+     * 이전 실행에서 남았을 수 있는 말 엔티티를 월드 전체에서 정리한다.
+     */
     public void cleanupTaggedPieceEntities() {
         cancelPhysicsTask();
         actionRunning = false;
@@ -227,6 +242,9 @@ public final class BoardManager {
         }
     }
 
+    /**
+     * 조작 반경을 넘지 않도록 발사 목표 지점을 제한한다.
+     */
     public Location clampLaunchTarget(PieceData selectedPiece, Location targetLocation) {
         Location origin = selectedPiece.getLocation();
         Location clamped = targetLocation.clone();
@@ -244,6 +262,9 @@ public final class BoardManager {
         return flattenToBoard(origin.clone().add(limited));
     }
 
+    /**
+     * 목표 지점 기준으로 실제 발사 속도 벡터를 계산한다.
+     */
     public Vector createLaunchVector(PieceData selectedPiece, Location targetLocation) {
         Location clampedTarget = clampLaunchTarget(selectedPiece, targetLocation);
         Vector direction = selectedPiece.getLocation().toVector().subtract(clampedTarget.toVector());

@@ -3,7 +3,7 @@ package org.ha2yo.alkagi.game;
 import net.kyori.adventure.text.format.NamedTextColor;
 
 /**
- * 게임에서 사용하는 팀 종류와 팀 표시 정보를 담는다.
+ * 알까기에서 사용하는 팀 종류와 표시 색상을 정의한다.
  */
 public enum TeamType {
     BLACK("흑", NamedTextColor.DARK_GRAY),
@@ -25,6 +25,9 @@ public enum TeamType {
         return color;
     }
 
+    /**
+     * 상대 팀을 반환한다.
+     */
     public TeamType opposite() {
         return this == BLACK ? WHITE : BLACK;
     }

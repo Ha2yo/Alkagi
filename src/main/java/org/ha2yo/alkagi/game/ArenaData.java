@@ -8,7 +8,7 @@ import org.bukkit.util.Vector;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * 경기 좌표와 게임 설정값을 보관하고 직렬화하는 데이터 객체다.
+ * 경기장 좌표와 게임 설정값을 보관하고 config와 직렬화한다.
  */
 public final class ArenaData {
 
@@ -25,6 +25,9 @@ public final class ArenaData {
     private double pieceSize = DEFAULT_PIECE_SIZE;
     private int turnTimeSeconds = DEFAULT_TURN_TIME_SECONDS;
 
+    /**
+     * config.yml에 저장된 경기장 설정을 읽어 메모리 객체로 복원한다.
+     */
     public static ArenaData fromConfig(FileConfiguration config) {
         ArenaData arenaData = new ArenaData();
         arenaData.lobbyLocation = readLocation(config, "arena.lobby");
@@ -38,6 +41,9 @@ public final class ArenaData {
         return arenaData;
     }
 
+    /**
+     * 현재 경기장 설정을 config.yml에 다시 기록한다.
+     */
     public void save(FileConfiguration config) {
         writeLocation(config, "arena.lobby", lobbyLocation);
         writeLocation(config, "arena.board.pos1", boardPos1);
@@ -125,6 +131,9 @@ public final class ArenaData {
         return boardPos1 != null && boardPos2 != null;
     }
 
+    /**
+     * 주어진 좌표가 보드 영역 안에 포함되는지 확인한다.
+     */
     public boolean isInsideBoard(Location location) {
         if (!isBoardConfigured() || location.getWorld() == null || boardPos1.getWorld() == null || boardPos2.getWorld() == null) {
             return false;
@@ -146,6 +155,9 @@ public final class ArenaData {
             && location.getZ() >= minZ && location.getZ() <= maxZ;
     }
 
+    /**
+     * 시선 방향을 보드 평면에 투영한 뒤, 실제 보드 범위 안에 들어올 때만 좌표를 반환한다.
+     */
     public @Nullable Location projectToBoard(Location origin, Vector direction, double maxDistance) {
         Location projected = projectToBoardPlane(origin, direction, maxDistance);
         if (projected == null || boardPos1 == null || boardPos2 == null) {
@@ -163,6 +175,9 @@ public final class ArenaData {
         return projected;
     }
 
+    /**
+     * 시선 방향과 보드 평면의 교차 지점을 계산한다.
+     */
     public @Nullable Location projectToBoardPlane(Location origin, Vector direction, double maxDistance) {
         if (!isBoardConfigured() || origin.getWorld() == null || boardPos1 == null || boardPos2 == null) {
             return null;

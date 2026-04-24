@@ -10,7 +10,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.UUID;
 
 /**
- * 보드 위 말 하나의 상태와 연결된 엔티티 참조를 보관한다.
+ * 보드 위 말 하나의 상태와 연결된 엔티티 참조를 함께 보관한다.
  */
 public final class PieceData {
 
@@ -45,6 +45,9 @@ public final class PieceData {
         return location.clone();
     }
 
+    /**
+     * 말의 논리 좌표를 갱신하고 연결된 엔티티 위치도 함께 이동시킨다.
+     */
     public void setLocation(Location location) {
         this.location = normalizeLocation(location);
         if (entity != null) {
@@ -62,6 +65,9 @@ public final class PieceData {
         return alive;
     }
 
+    /**
+     * 말 생존 여부를 바꾸고 탈락 시 연결된 엔티티도 정리한다.
+     */
     public void setAlive(boolean alive) {
         this.alive = alive;
         if (!alive && entity != null) {
