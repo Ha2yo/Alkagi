@@ -180,10 +180,6 @@ public final class BoardManager {
         return pieceByEntityId.containsKey(entityId);
     }
 
-    public List<PieceData> getSelectablePieces() {
-        return pieceByEntityId.values().stream().distinct().filter(PieceData::isAlive).toList();
-    }
-
     public void removePiece(PieceData pieceData) {
         UUID entityId = pieceData.getEntityId();
         if (entityId != null) {
@@ -309,10 +305,10 @@ public final class BoardManager {
         float pieceSize = (float) pieceData.getPieceSize();
         float lift = Math.max(0.10F, pieceSize * 0.18F);
         display.setTransformation(new Transformation(
-            new Vector3f(0.0F, lift, 0.0F),
-            new AxisAngle4f(),
-            new Vector3f(pieceSize, pieceSize * 0.42F, pieceSize),
-            new AxisAngle4f()
+                new Vector3f(0.0F, lift, 0.0F),
+                new AxisAngle4f(),
+                new Vector3f(pieceSize, pieceSize * 0.42F, pieceSize),
+                new AxisAngle4f()
         ));
     }
 
@@ -322,7 +318,7 @@ public final class BoardManager {
 
     private boolean isTaggedPieceEntity(Entity entity) {
         return PIECE_ENTITY_MARKER.equals(
-            entity.getPersistentDataContainer().get(pieceEntityKey, PersistentDataType.STRING)
+                entity.getPersistentDataContainer().get(pieceEntityKey, PersistentDataType.STRING)
         );
     }
 
@@ -335,15 +331,15 @@ public final class BoardManager {
         }
         if (entity instanceof ArmorStand armorStand) {
             return armorStand.isInvisible()
-                && armorStand.isInvulnerable()
-                && !armorStand.hasGravity()
-                && !armorStand.hasBasePlate()
-                && !armorStand.hasArms();
+                    && armorStand.isInvulnerable()
+                    && !armorStand.hasGravity()
+                    && !armorStand.hasBasePlate()
+                    && !armorStand.hasArms();
         }
         if (entity instanceof Interaction interaction) {
             return interaction.isResponsive()
-                && Math.abs(interaction.getInteractionWidth() - (float) getSelectionDiameter()) < 0.15F
-                && Math.abs(interaction.getInteractionHeight() - (float) getSelectionHeight()) < 0.25F;
+                    && Math.abs(interaction.getInteractionWidth() - (float) getSelectionDiameter()) < 0.15F
+                    && Math.abs(interaction.getInteractionHeight() - (float) getSelectionHeight()) < 0.25F;
         }
         return false;
     }
@@ -368,11 +364,11 @@ public final class BoardManager {
         Location boardPos1 = arenaData.getBoardPos1();
         Location boardPos2 = arenaData.getBoardPos2();
         if (boardPos1 == null || boardPos2 == null || location.getWorld() == null
-            || boardPos1.getWorld() == null || boardPos2.getWorld() == null) {
+                || boardPos1.getWorld() == null || boardPos2.getWorld() == null) {
             return false;
         }
         if (!location.getWorld().getUID().equals(boardPos1.getWorld().getUID())
-            || !location.getWorld().getUID().equals(boardPos2.getWorld().getUID())) {
+                || !location.getWorld().getUID().equals(boardPos2.getWorld().getUID())) {
             return false;
         }
 
@@ -384,8 +380,8 @@ public final class BoardManager {
         double maxZ = Math.max(boardPos1.getZ(), boardPos2.getZ()) + horizontalMargin;
 
         return location.getX() >= minX && location.getX() <= maxX
-            && location.getY() >= minY && location.getY() <= maxY
-            && location.getZ() >= minZ && location.getZ() <= maxZ;
+                && location.getY() >= minY && location.getY() <= maxY
+                && location.getZ() >= minZ && location.getZ() <= maxZ;
     }
 
     private void configureInteractionHitbox(Interaction interaction, PieceData pieceData) {
@@ -439,8 +435,8 @@ public final class BoardManager {
 
         double distance = Math.sqrt(Math.max(distanceSquared, 0.0000001D));
         Vector normal = distance <= 0.0001D
-            ? new Vector(1.0D, 0.0D, 0.0D)
-            : delta.clone().multiply(1.0D / distance);
+                ? new Vector(1.0D, 0.0D, 0.0D)
+                : delta.clone().multiply(1.0D / distance);
 
         double firstMass = getCollisionMass(first);
         double secondMass = getCollisionMass(second);
@@ -482,12 +478,12 @@ public final class BoardManager {
 
         double totalMass = firstMass + secondMass;
         double newFirstAlongNormal = (
-            (firstMass - (COLLISION_RESTITUTION * secondMass)) * firstAlongNormal
-                + (1.0D + COLLISION_RESTITUTION) * secondMass * secondAlongNormal
+                (firstMass - (COLLISION_RESTITUTION * secondMass)) * firstAlongNormal
+                        + (1.0D + COLLISION_RESTITUTION) * secondMass * secondAlongNormal
         ) / totalMass;
         double newSecondAlongNormal = (
-            (secondMass - (COLLISION_RESTITUTION * firstMass)) * secondAlongNormal
-                + (1.0D + COLLISION_RESTITUTION) * firstMass * firstAlongNormal
+                (secondMass - (COLLISION_RESTITUTION * firstMass)) * secondAlongNormal
+                        + (1.0D + COLLISION_RESTITUTION) * firstMass * firstAlongNormal
         ) / totalMass;
 
         Vector firstNormalComponent = normal.clone().multiply(firstAlongNormal);
@@ -643,7 +639,7 @@ public final class BoardManager {
                 double minZ = z - radius;
                 double maxZ = z + 1.0D + radius;
                 if (location.getX() >= minX && location.getX() <= maxX
-                    && location.getZ() >= minZ && location.getZ() <= maxZ) {
+                        && location.getZ() >= minZ && location.getZ() <= maxZ) {
                     return true;
                 }
             }
@@ -759,10 +755,6 @@ public final class BoardManager {
 
     public double getSelectionHeight() {
         return getSelectionHeight(arenaData.getPieceSize());
-    }
-
-    public double getSelectionRadius(PieceData pieceData) {
-        return getSelectionDiameter(pieceData) / 2.0D;
     }
 
     private double getPieceRadius(PieceData pieceData) {

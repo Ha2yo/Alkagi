@@ -8,11 +8,13 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.EulerAngle;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
@@ -99,9 +101,9 @@ public final class GuideRenderer {
         }
 
         Location target = gameManager.getArenaData().projectToBoard(
-            player.getEyeLocation(),
-            player.getEyeLocation().getDirection(),
-            TRACE_DISTANCE
+                player.getEyeLocation(),
+                player.getEyeLocation().getDirection(),
+                TRACE_DISTANCE
         );
         if (target == null) {
             return;
@@ -121,19 +123,19 @@ public final class GuideRenderer {
             clearAimMarker(player.getUniqueId());
             PieceData hoveredPiece = traceHoveredPiece(player, session);
             if (hoveredPiece != null) {
-                drawPieceHover(player, hoveredPiece);
+                drawPieceHover(player, hoveredPiece.getLocation());
             }
             return;
         }
 
         Location target = gameManager.getArenaData().projectToBoardPlane(
-            player.getEyeLocation(),
-            player.getEyeLocation().getDirection(),
-            TRACE_DISTANCE
+                player.getEyeLocation(),
+                player.getEyeLocation().getDirection(),
+                TRACE_DISTANCE
         );
         if (target == null) {
             clearAimMarker(player.getUniqueId());
-            drawPieceHover(player, selectedPiece);
+            drawPieceHover(player, selectedPiece.getLocation());
             return;
         }
 
@@ -144,7 +146,23 @@ public final class GuideRenderer {
      * 아직 말을 선택하지 않았을 때는 현재 조준 중인 자기 팀 말만 강조 표시한다.
      */
     private PieceData traceHoveredPiece(Player player, GameSession session) {
-        return RemoteGameListener.findBestTargetPiece(player, session, gameManager);
+        RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
+                player.getEyeLocation(),
+                player.getEyeLocation().getDirection(),
+                TRACE_DISTANCE,
+                entity -> entity instanceof Interaction
+                        && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
+        );
+
+        if (entityTrace == null || entityTrace.getHitEntity() == null) {
+            return null;
+        }
+
+        PieceData hoveredPiece = gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
+        if (hoveredPiece == null || hoveredPiece.getTeamType() != session.getTeam(player.getUniqueId())) {
+            return null;
+        }
+        return hoveredPiece;
     }
 
     private void drawPlacementMarker(Player viewer, Location target, TeamType teamType) {
@@ -153,9 +171,8 @@ public final class GuideRenderer {
         drawRing(viewer, target, radius, dust, 18);
     }
 
-    private void drawPieceHover(Player viewer, PieceData pieceData) {
-        double radius = gameManager.getBoardManager().getSelectionRadius(pieceData) * 1.08D;
-        Location pieceLocation = pieceData.getLocation();
+    private void drawPieceHover(Player viewer, Location pieceLocation) {
+        double radius = (gameManager.getBoardManager().getSelectionDiameter() / 2.0D) * 1.08D;
         drawRing(viewer, pieceLocation.clone().add(0.0D, 0.1D, 0.0D), radius, GREEN_DUST, 22);
     }
 
@@ -168,11 +185,11 @@ public final class GuideRenderer {
         Location clampedTarget = gameManager.getBoardManager().clampLaunchTarget(selectedPiece, target);
 
         drawRing(
-            player,
-            origin,
-            controlRadius,
-            CYAN_DUST,
-            Math.max(32, (int) Math.ceil((Math.PI * 2.0D * controlRadius) / RING_POINT_SPACING))
+                player,
+                origin,
+                controlRadius,
+                CYAN_DUST,
+                Math.max(32, (int) Math.ceil((Math.PI * 2.0D * controlRadius) / RING_POINT_SPACING))
         );
 
         Vector launchVector = gameManager.getBoardManager().createLaunchVector(selectedPiece, clampedTarget);
@@ -222,8 +239,8 @@ public final class GuideRenderer {
         }
 
         AimArrowMarker marker = aimMarkers.compute(
-            owner.getUniqueId(),
-            (playerId, existing) -> existing != null && existing.isValid() ? existing : AimArrowMarker.spawn(world, tip)
+                owner.getUniqueId(),
+                (playerId, existing) -> existing != null && existing.isValid() ? existing : AimArrowMarker.spawn(world, tip)
         );
         if (marker == null || !marker.isValid()) {
             clearAimMarker(owner.getUniqueId());
@@ -241,10 +258,10 @@ public final class GuideRenderer {
         Vector lateralOffset = sideDirection.clone().multiply(ARROW_LATERAL_OFFSET);
         Vector shaftStartOffset = flatDirection.clone().multiply(ARROW_SHAFT_START_OFFSET);
         marker.update(
-            arrowOrigin.clone().add(lateralOffset).subtract(shaftStartOffset),
-            tip.clone().add(lateralOffset),
-            flatDirection,
-            sideDirection
+                arrowOrigin.clone().add(lateralOffset).subtract(shaftStartOffset),
+                tip.clone().add(lateralOffset),
+                flatDirection,
+                sideDirection
         );
 
         for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
@@ -294,9 +311,9 @@ public final class GuideRenderer {
      * 화살표를 구성하는 아머스탠드 묶음을 한 객체로 다룬다.
      */
     private record AimArrowMarker(
-        java.util.List<ArmorStand> shaft,
-        java.util.List<ArmorStand> leftHead,
-        java.util.List<ArmorStand> rightHead
+            java.util.List<ArmorStand> shaft,
+            java.util.List<ArmorStand> leftHead,
+            java.util.List<ArmorStand> rightHead
     ) {
 
         private static AimArrowMarker spawn(World world, Location location) {

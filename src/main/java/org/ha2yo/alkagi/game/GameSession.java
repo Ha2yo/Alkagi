@@ -180,6 +180,7 @@ public final class GameSession {
         gameState = GameState.TEAM_ASSIGNING;
         assignTeams();
         applySpectatorStateToNonParticipants();
+        refreshAllPlayerFormatting();
         selectPlacementPlayers();
         startPlacingPhase();
         return true;
@@ -214,6 +215,7 @@ public final class GameSession {
         gameState = GameState.TEAM_ASSIGNING;
         assignTeams();
         applySpectatorStateToNonParticipants();
+        refreshAllPlayerFormatting();
         applyPresetPieces(presetData);
         startPlayingPhase();
         return true;
@@ -757,6 +759,11 @@ public final class GameSession {
         assignPlayerToTabTeam(player, teamType);
     }
 
+    public NamedTextColor getPlayerColor(UUID playerId) {
+        TeamType teamType = playerTeamMap.get(playerId);
+        return teamType == null ? DEFAULT_PLAYER_COLOR : teamType.getColor();
+    }
+
     /**
      * 모든 온라인 플레이어의 이름색과 탭 정렬을 다시 갱신한다.
      */
@@ -799,6 +806,9 @@ public final class GameSession {
         if (team == null) {
             team = scoreboard.registerNewTeam(teamName);
         }
+        team.color(teamType == null ? DEFAULT_PLAYER_COLOR : teamType.getColor());
+        team.prefix(Component.empty());
+        team.suffix(Component.empty());
         return team;
     }
 
