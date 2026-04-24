@@ -93,6 +93,9 @@ public final class BoardManager {
         if (!arenaData.isInsideBoard(location)) {
             return false;
         }
+        if (isBlockedByObstacle(location)) {
+            return false;
+        }
 
         for (TeamData teamData : teamDataMap.values()) {
             for (PieceData piece : teamData.getAlivePieces()) {
@@ -553,8 +556,46 @@ public final class BoardManager {
         return null;
     }
 
+    private boolean isBlockedByObstacle(Location location) {
+        World world = location.getWorld();
+        if (world == null) {
+            return false;
+        }
+
+        double radius = getPieceRadius();
+        int minBlockX = (int) Math.floor(location.getX() - radius) - 1;
+        int maxBlockX = (int) Math.floor(location.getX() + radius) + 1;
+        int minBlockZ = (int) Math.floor(location.getZ() - radius) - 1;
+        int maxBlockZ = (int) Math.floor(location.getZ() + radius) + 1;
+        int blockY = (int) Math.floor(location.getY());
+
+        for (int x = minBlockX; x <= maxBlockX; x++) {
+            for (int z = minBlockZ; z <= maxBlockZ; z++) {
+                if (!isPlacementObstacle(world, x, blockY, z) && !isPlacementObstacle(world, x, blockY + 1, z)) {
+                    continue;
+                }
+
+                double minX = x - radius;
+                double maxX = x + 1.0D + radius;
+                double minZ = z - radius;
+                double maxZ = z + 1.0D + radius;
+                if (location.getX() >= minX && location.getX() <= maxX
+                    && location.getZ() >= minZ && location.getZ() <= maxZ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private boolean isObstacleSlab(World world, int x, int y, int z) {
         return Tag.SLABS.isTagged(world.getBlockAt(x, y, z).getType());
+    }
+
+    private boolean isPlacementObstacle(World world, int x, int y, int z) {
+        Material type = world.getBlockAt(x, y, z).getType();
+        return Tag.SLABS.isTagged(type) || Tag.TRAPDOORS.isTagged(type);
     }
 
     private void playPieceCollisionSound(Location location) {
