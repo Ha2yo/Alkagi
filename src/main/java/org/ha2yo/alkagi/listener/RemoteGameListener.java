@@ -23,7 +23,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
 import org.ha2yo.alkagi.game.GameState;
@@ -37,8 +37,6 @@ import org.ha2yo.alkagi.game.model.PieceData;
 public final class RemoteGameListener implements Listener {
 
     private static final double REMOTE_TRACE_DISTANCE = 256.0D;
-    private static final double SELECTION_RAY_SIZE = 0.45D;
-
     private final GameManager gameManager;
 
     public RemoteGameListener(GameManager gameManager) {
@@ -387,21 +385,57 @@ public final class RemoteGameListener implements Listener {
     }
 
     private PieceData selectPieceByRay(Player player, GameSession session) {
-        // 실제 말 엔티티 대신 선택용 Interaction 엔티티만 판정 대상으로 삼는다.
-        RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
-            player.getEyeLocation(),
-            player.getEyeLocation().getDirection(),
-            REMOTE_TRACE_DISTANCE,
-            SELECTION_RAY_SIZE,
-            entity -> entity instanceof Interaction
-                && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
-        );
+        PieceData targetPiece = findBestTargetPiece(player, session);
+        if (targetPiece == null) {
+            return null;
+        }
+        UUID entityId = targetPiece.getInteractionEntity() == null ? null : targetPiece.getInteractionEntity().getUniqueId();
+        if (entityId == null) {
+            return null;
+        }
+        return session.selectPiece(player, entityId);
+    }
 
-        if (entityTrace == null || entityTrace.getHitEntity() == null) {
+    static @org.jetbrains.annotations.Nullable PieceData findBestTargetPiece(Player player, GameSession session, GameManager gameManager) {
+        TeamType teamType = session.getTeam(player.getUniqueId());
+        if (teamType == null) {
             return null;
         }
 
-        return session.selectPiece(player, entityTrace.getHitEntity().getUniqueId());
+        Location origin = player.getEyeLocation();
+        Vector direction = origin.getDirection().clone().normalize();
+        PieceData bestPiece = null;
+        double bestScore = Double.MAX_VALUE;
+        double maxDistance = REMOTE_TRACE_DISTANCE;
+
+        for (PieceData pieceData : gameManager.getBoardManager().getSelectablePieces()) {
+            if (pieceData.getTeamType() != teamType) {
+                continue;
+            }
+
+            Vector toPiece = pieceData.getLocation().toVector().subtract(origin.toVector());
+            double forwardDistance = toPiece.dot(direction);
+            if (forwardDistance < 0.0D || forwardDistance > maxDistance) {
+                continue;
+            }
+
+            Vector closestPoint = origin.toVector().add(direction.clone().multiply(forwardDistance));
+            double lateralDistance = pieceData.getLocation().toVector().distance(closestPoint);
+            double allowedRadius = gameManager.getBoardManager().getSelectionRadius(pieceData) + 0.2D;
+            if (lateralDistance > allowedRadius) {
+                continue;
+            }
+
+            double normalizedOffset = lateralDistance / Math.max(0.0001D, allowedRadius);
+            double distancePenalty = forwardDistance / maxDistance;
+            double score = (normalizedOffset * 10.0D) + distancePenalty;
+            if (score < bestScore) {
+                bestScore = score;
+                bestPiece = pieceData;
+            }
+        }
+
+        return bestPiece;
     }
 
     private String formatTeamDisplayName(TeamType teamType) {

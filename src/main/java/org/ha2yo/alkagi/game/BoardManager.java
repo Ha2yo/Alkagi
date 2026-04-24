@@ -180,6 +180,10 @@ public final class BoardManager {
         return pieceByEntityId.containsKey(entityId);
     }
 
+    public List<PieceData> getSelectablePieces() {
+        return pieceByEntityId.values().stream().distinct().filter(PieceData::isAlive).toList();
+    }
+
     public void removePiece(PieceData pieceData) {
         UUID entityId = pieceData.getEntityId();
         if (entityId != null) {
@@ -755,6 +759,10 @@ public final class BoardManager {
 
     public double getSelectionHeight() {
         return getSelectionHeight(arenaData.getPieceSize());
+    }
+
+    public double getSelectionRadius(PieceData pieceData) {
+        return getSelectionDiameter(pieceData) / 2.0D;
     }
 
     private double getPieceRadius(PieceData pieceData) {

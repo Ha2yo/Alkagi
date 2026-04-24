@@ -8,13 +8,11 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.entity.ArmorStand;
-import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.EulerAngle;
-import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
@@ -123,7 +121,7 @@ public final class GuideRenderer {
             clearAimMarker(player.getUniqueId());
             PieceData hoveredPiece = traceHoveredPiece(player, session);
             if (hoveredPiece != null) {
-                drawPieceHover(player, hoveredPiece.getLocation());
+                drawPieceHover(player, hoveredPiece);
             }
             return;
         }
@@ -135,7 +133,7 @@ public final class GuideRenderer {
         );
         if (target == null) {
             clearAimMarker(player.getUniqueId());
-            drawPieceHover(player, selectedPiece.getLocation());
+            drawPieceHover(player, selectedPiece);
             return;
         }
 
@@ -146,23 +144,7 @@ public final class GuideRenderer {
      * 아직 말을 선택하지 않았을 때는 현재 조준 중인 자기 팀 말만 강조 표시한다.
      */
     private PieceData traceHoveredPiece(Player player, GameSession session) {
-        RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
-            player.getEyeLocation(),
-            player.getEyeLocation().getDirection(),
-            TRACE_DISTANCE,
-            entity -> entity instanceof Interaction
-                && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
-        );
-
-        if (entityTrace == null || entityTrace.getHitEntity() == null) {
-            return null;
-        }
-
-        PieceData hoveredPiece = gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
-        if (hoveredPiece == null || hoveredPiece.getTeamType() != session.getTeam(player.getUniqueId())) {
-            return null;
-        }
-        return hoveredPiece;
+        return RemoteGameListener.findBestTargetPiece(player, session, gameManager);
     }
 
     private void drawPlacementMarker(Player viewer, Location target, TeamType teamType) {
@@ -171,8 +153,9 @@ public final class GuideRenderer {
         drawRing(viewer, target, radius, dust, 18);
     }
 
-    private void drawPieceHover(Player viewer, Location pieceLocation) {
-        double radius = (gameManager.getBoardManager().getSelectionDiameter() / 2.0D) * 1.08D;
+    private void drawPieceHover(Player viewer, PieceData pieceData) {
+        double radius = gameManager.getBoardManager().getSelectionRadius(pieceData) * 1.08D;
+        Location pieceLocation = pieceData.getLocation();
         drawRing(viewer, pieceLocation.clone().add(0.0D, 0.1D, 0.0D), radius, GREEN_DUST, 22);
     }
 
