@@ -27,15 +27,13 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 배치 가이드와 조준 가이드를 플레이어에게 렌더링한다.
+ * 배치 위치와 발사 방향을 플레이어에게 시각적으로 안내한다.
  */
 public final class GuideRenderer {
 
     private static final double TRACE_DISTANCE = 256.0D;
     private static final double GUIDE_Y_OFFSET = 0.12D;
     private static final double AIM_ARROW_HEIGHT = 0.02D;
-    private static final double AIM_ARROW_MARGIN = 0.24D;
-    private static final double ARROW_VISUAL_MARGIN = 1.65D;
     private static final int ARROW_SHAFT_SEGMENTS = 13;
     private static final int ARROW_HEAD_SEGMENTS = 7;
     private static final double ARROW_HEAD_BACK_OFFSET = 0.18D;
@@ -76,6 +74,9 @@ public final class GuideRenderer {
         clearAllAimMarkers();
     }
 
+    /**
+     * 현재 게임 단계에 따라 배치 가이드 또는 조준 가이드를 매 틱 갱신한다.
+     */
     private void tick() {
         GameSession session = gameManager.getSession();
         for (Player player : plugin.getServer().getOnlinePlayers()) {
@@ -99,7 +100,11 @@ public final class GuideRenderer {
             return;
         }
 
-        Location target = gameManager.getArenaData().projectToBoard(player.getEyeLocation(), player.getEyeLocation().getDirection(), TRACE_DISTANCE);
+        Location target = gameManager.getArenaData().projectToBoard(
+            player.getEyeLocation(),
+            player.getEyeLocation().getDirection(),
+            TRACE_DISTANCE
+        );
         if (target == null) {
             return;
         }
@@ -116,28 +121,18 @@ public final class GuideRenderer {
         PieceData selectedPiece = session.getSelectedPiece();
         if (selectedPiece == null) {
             clearAimMarker(player.getUniqueId());
-            RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
-                player.getEyeLocation(),
-                player.getEyeLocation().getDirection(),
-                TRACE_DISTANCE,
-                entity -> entity instanceof Interaction
-                    && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
-            );
-
-            if (entityTrace == null || entityTrace.getHitEntity() == null) {
-                return;
+            PieceData hoveredPiece = traceHoveredPiece(player, session);
+            if (hoveredPiece != null) {
+                drawPieceHover(player, hoveredPiece.getLocation());
             }
-
-            PieceData hoveredPiece = gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
-            if (hoveredPiece == null || hoveredPiece.getTeamType() != session.getTeam(player.getUniqueId())) {
-                return;
-            }
-
-            drawPieceHover(player, hoveredPiece.getLocation());
             return;
         }
 
-        Location target = gameManager.getArenaData().projectToBoardPlane(player.getEyeLocation(), player.getEyeLocation().getDirection(), TRACE_DISTANCE);
+        Location target = gameManager.getArenaData().projectToBoardPlane(
+            player.getEyeLocation(),
+            player.getEyeLocation().getDirection(),
+            TRACE_DISTANCE
+        );
         if (target == null) {
             clearAimMarker(player.getUniqueId());
             drawPieceHover(player, selectedPiece.getLocation());
@@ -145,6 +140,29 @@ public final class GuideRenderer {
         }
 
         drawAimGuide(player, selectedPiece, target);
+    }
+
+    /**
+     * 아직 말을 선택하지 않았을 때는 현재 조준 중인 자기 팀 말만 강조 표시한다.
+     */
+    private PieceData traceHoveredPiece(Player player, GameSession session) {
+        RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
+            player.getEyeLocation(),
+            player.getEyeLocation().getDirection(),
+            TRACE_DISTANCE,
+            entity -> entity instanceof Interaction
+                && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
+        );
+
+        if (entityTrace == null || entityTrace.getHitEntity() == null) {
+            return null;
+        }
+
+        PieceData hoveredPiece = gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
+        if (hoveredPiece == null || hoveredPiece.getTeamType() != session.getTeam(player.getUniqueId())) {
+            return null;
+        }
+        return hoveredPiece;
     }
 
     private void drawPlacementMarker(Player viewer, Location target, TeamType teamType) {
@@ -158,13 +176,21 @@ public final class GuideRenderer {
         drawRing(viewer, pieceLocation.clone().add(0.0D, 0.1D, 0.0D), radius, GREEN_DUST, 22);
     }
 
+    /**
+     * 선택된 말 주변에는 조작 반경 원과 발사 방향 화살표를 함께 표시한다.
+     */
     private void drawAimGuide(Player player, PieceData selectedPiece, Location target) {
         Location origin = selectedPiece.getLocation().clone().add(0.0D, GUIDE_Y_OFFSET, 0.0D);
         double controlRadius = gameManager.getBoardManager().getLaunchControlRadius();
         Location clampedTarget = gameManager.getBoardManager().clampLaunchTarget(selectedPiece, target);
 
-        drawRing(player, origin, controlRadius, CYAN_DUST,
-            Math.max(32, (int) Math.ceil((Math.PI * 2.0D * controlRadius) / RING_POINT_SPACING)));
+        drawRing(
+            player,
+            origin,
+            controlRadius,
+            CYAN_DUST,
+            Math.max(32, (int) Math.ceil((Math.PI * 2.0D * controlRadius) / RING_POINT_SPACING))
+        );
 
         Vector launchVector = gameManager.getBoardManager().createLaunchVector(selectedPiece, clampedTarget);
         double power = launchVector.length();
@@ -202,6 +228,9 @@ public final class GuideRenderer {
         }
     }
 
+    /**
+     * 조준 화살표는 재사용 가능한 아머스탠드 묶음을 플레이어별로 관리한다.
+     */
     private void updateAimMarker(Player owner, Location arrowOrigin, Location tip, Vector direction) {
         World world = tip.getWorld();
         if (world == null) {
@@ -209,9 +238,10 @@ public final class GuideRenderer {
             return;
         }
 
-        AimArrowMarker marker = aimMarkers.compute(owner.getUniqueId(), (playerId, existing) -> existing != null && existing.isValid()
-            ? existing
-            : AimArrowMarker.spawn(world, tip));
+        AimArrowMarker marker = aimMarkers.compute(
+            owner.getUniqueId(),
+            (playerId, existing) -> existing != null && existing.isValid() ? existing : AimArrowMarker.spawn(world, tip)
+        );
         if (marker == null || !marker.isValid()) {
             clearAimMarker(owner.getUniqueId());
             return;
@@ -277,13 +307,21 @@ public final class GuideRenderer {
         world.spawnParticle(Particle.DUST, location, 0, 0.0D, 0.0D, 0.0D, 0.0D, dust, true);
     }
 
-    private record AimArrowMarker(java.util.List<ArmorStand> shaft, java.util.List<ArmorStand> leftHead, java.util.List<ArmorStand> rightHead) {
+    /**
+     * 화살표를 구성하는 아머스탠드 묶음을 한 객체로 다룬다.
+     */
+    private record AimArrowMarker(
+        java.util.List<ArmorStand> shaft,
+        java.util.List<ArmorStand> leftHead,
+        java.util.List<ArmorStand> rightHead
+    ) {
 
         private static AimArrowMarker spawn(World world, Location location) {
             java.util.List<ArmorStand> shaft = new java.util.ArrayList<>();
             for (int i = 0; i < ARROW_SHAFT_SEGMENTS; i++) {
                 shaft.add(world.spawn(location, ArmorStand.class, GuideRenderer::configureArrowStand));
             }
+
             java.util.List<ArmorStand> leftHead = new java.util.ArrayList<>();
             java.util.List<ArmorStand> rightHead = new java.util.ArrayList<>();
             for (int i = 0; i < ARROW_HEAD_SEGMENTS; i++) {

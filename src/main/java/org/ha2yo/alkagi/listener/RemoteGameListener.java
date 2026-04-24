@@ -3,7 +3,6 @@ package org.ha2yo.alkagi.listener;
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
@@ -30,6 +29,9 @@ import org.ha2yo.alkagi.game.GameState;
 import org.ha2yo.alkagi.game.TeamType;
 import org.ha2yo.alkagi.game.model.PieceData;
 
+/**
+ * 알까기에서 플레이어 이벤트를 게임 로직과 연결한다.
+ */
 public final class RemoteGameListener implements Listener {
 
     private static final double REMOTE_TRACE_DISTANCE = 256.0D;
@@ -45,6 +47,8 @@ public final class RemoteGameListener implements Listener {
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         GameSession session = gameManager.getSession();
+
+        // 경기 진행 중 접속자는 참가 대신 관전자 상태로 맞춘다.
         if (session.getGameState() != GameState.WAITING) {
             Location lobbyLocation = gameManager.getArenaData().getLobbyLocation();
             if (lobbyLocation != null) {
@@ -67,23 +71,15 @@ public final class RemoteGameListener implements Listener {
 
     @EventHandler
     public void onPrepareCraft(PrepareItemCraftEvent event) {
-        GameSession session = gameManager.getSession();
-        for (ItemStack ingredient : event.getInventory().getMatrix()) {
-            if (session.isRemoteController(ingredient)) {
-                event.getInventory().setResult(null);
-                return;
-            }
+        if (containsRemoteController(event.getInventory().getMatrix())) {
+            event.getInventory().setResult(null);
         }
     }
 
     @EventHandler
     public void onCraftItem(CraftItemEvent event) {
-        GameSession session = gameManager.getSession();
-        for (ItemStack ingredient : event.getInventory().getMatrix()) {
-            if (session.isRemoteController(ingredient)) {
-                event.setCancelled(true);
-                return;
-            }
+        if (containsRemoteController(event.getInventory().getMatrix())) {
+            event.setCancelled(true);
         }
     }
 
@@ -162,17 +158,7 @@ public final class RemoteGameListener implements Listener {
         GameSession session = gameManager.getSession();
 
         if (event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK) {
-            if (session.isUsingRemoteController(player)
-                && session.isPlayingPhase()
-                && session.isCurrentTurnPlayer(player.getUniqueId())
-                && session.getSelectedPiece() != null) {
-                boolean cancelledSelection = session.cancelSelectedPiece(player);
-                if (cancelledSelection) {
-                    event.setCancelled(true);
-                    player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.7F, 0.85F);
-                    player.sendMessage(Component.text("말 선택을 취소했습니다.", NamedTextColor.YELLOW));
-                }
-            }
+            handleLeftClickInteract(event, player, session);
             return;
         }
 
@@ -184,57 +170,11 @@ public final class RemoteGameListener implements Listener {
         }
 
         if (session.isPlacementPhase()) {
-            Location target = gameManager.getArenaData().projectToBoard(
-                player.getEyeLocation(),
-                player.getEyeLocation().getDirection(),
-                REMOTE_TRACE_DISTANCE
-            );
-            if (target == null) {
-                return;
-            }
-
-            boolean placed = session.placePiece(player, target);
-            if (placed) {
-                event.setCancelled(true);
-                TeamType teamType = session.getTeam(player.getUniqueId());
-                if (teamType != null) {
-                    int count = session.getPlacedCount(teamType);
-                    player.sendMessage(Component.text(
-                        formatTeamDisplayName(teamType) + " 말 배치: " + count + "/" + session.getConfiguredPieceCount(),
-                        NamedTextColor.YELLOW
-                    ));
-                }
-            }
+            handlePlacementInteract(event, player, session);
             return;
         }
 
-        if (!session.isPlayingPhase() || !session.isCurrentTurnPlayer(player.getUniqueId())) {
-            return;
-        }
-        if (session.getSelectedPiece() == null) {
-            PieceData pieceData = selectPieceByRay(player, session);
-            if (pieceData == null) {
-                return;
-            }
-
-            event.setCancelled(true);
-            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
-            player.sendMessage(Component.text("이제 마우스를 움직여 방향과 세기를 정해 주세요.", NamedTextColor.YELLOW));
-            return;
-        }
-
-        Location target = resolveLaunchTarget(player);
-        if (target == null) {
-            event.setCancelled(true);
-            player.sendActionBar(Component.text("보드 쪽을 바라본 상태에서 우클릭해 주세요.", NamedTextColor.YELLOW));
-            return;
-        }
-
-        boolean launched = session.launchSelectedPiece(player, target);
-        if (launched) {
-            event.setCancelled(true);
-            player.sendMessage(Component.text("말을 발사했습니다.", NamedTextColor.GREEN));
-        }
+        handlePlayingInteract(event, player, session);
     }
 
     @EventHandler
@@ -260,8 +200,7 @@ public final class RemoteGameListener implements Listener {
         }
 
         event.setCancelled(true);
-        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
-        player.sendMessage(Component.text("이제 마우스를 움직여 방향과 세기를 정해 주세요.", NamedTextColor.YELLOW));
+        sendSelectionReadyFeedback(player);
     }
 
     @EventHandler
@@ -282,12 +221,111 @@ public final class RemoteGameListener implements Listener {
             return;
         }
 
-        boolean cancelledSelection = session.cancelSelectedPiece(player);
-        if (!cancelledSelection) {
+        if (!session.cancelSelectedPiece(player)) {
             return;
         }
 
         event.setCancelled(true);
+        sendSelectionCancelledFeedback(player);
+    }
+
+    /**
+     * 좌클릭은 선택한 말을 취소하는 입력으로 사용한다.
+     */
+    private void handleLeftClickInteract(PlayerInteractEvent event, Player player, GameSession session) {
+        if (!session.isUsingRemoteController(player)
+            || !session.isPlayingPhase()
+            || !session.isCurrentTurnPlayer(player.getUniqueId())
+            || session.getSelectedPiece() == null) {
+            return;
+        }
+
+        if (!session.cancelSelectedPiece(player)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        sendSelectionCancelledFeedback(player);
+    }
+
+    /**
+     * 배치 단계 우클릭은 현재 바라보는 보드 위치에 말을 놓는다.
+     */
+    private void handlePlacementInteract(PlayerInteractEvent event, Player player, GameSession session) {
+        Location target = gameManager.getArenaData().projectToBoard(
+            player.getEyeLocation(),
+            player.getEyeLocation().getDirection(),
+            REMOTE_TRACE_DISTANCE
+        );
+        if (target == null) {
+            return;
+        }
+
+        if (!session.placePiece(player, target)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        TeamType teamType = session.getTeam(player.getUniqueId());
+        if (teamType != null) {
+            int count = session.getPlacedCount(teamType);
+            player.sendMessage(Component.text(
+                formatTeamDisplayName(teamType) + " 말 배치: " + count + "/" + session.getConfiguredPieceCount(),
+                NamedTextColor.YELLOW
+            ));
+        }
+    }
+
+    /**
+     * 플레이 단계 우클릭은 말 선택 또는 발사를 수행한다.
+     */
+    private void handlePlayingInteract(PlayerInteractEvent event, Player player, GameSession session) {
+        if (!session.isPlayingPhase() || !session.isCurrentTurnPlayer(player.getUniqueId())) {
+            return;
+        }
+
+        if (session.getSelectedPiece() == null) {
+            PieceData pieceData = selectPieceByRay(player, session);
+            if (pieceData == null) {
+                return;
+            }
+
+            event.setCancelled(true);
+            sendSelectionReadyFeedback(player);
+            return;
+        }
+
+        Location target = resolveLaunchTarget(player);
+        if (target == null) {
+            event.setCancelled(true);
+            player.sendActionBar(Component.text("보드 쪽을 바라본 상태에서 우클릭해 주세요.", NamedTextColor.YELLOW));
+            return;
+        }
+
+        if (!session.launchSelectedPiece(player, target)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        player.sendMessage(Component.text("말을 발사했습니다.", NamedTextColor.GREEN));
+    }
+
+    private boolean containsRemoteController(ItemStack[] matrix) {
+        GameSession session = gameManager.getSession();
+        for (ItemStack ingredient : matrix) {
+            if (session.isRemoteController(ingredient)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void sendSelectionReadyFeedback(Player player) {
+        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
+        player.sendMessage(Component.text("이제 마우스를 움직여 방향과 세기를 정해 주세요.", NamedTextColor.YELLOW));
+    }
+
+    private void sendSelectionCancelledFeedback(Player player) {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.7F, 0.85F);
         player.sendMessage(Component.text("말 선택을 취소했습니다.", NamedTextColor.YELLOW));
     }
@@ -301,6 +339,7 @@ public final class RemoteGameListener implements Listener {
     }
 
     private PieceData selectPieceByRay(Player player, GameSession session) {
+        // 실제 말 엔티티 대신 선택용 Interaction 엔티티만 판정 대상으로 삼는다.
         RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
             player.getEyeLocation(),
             player.getEyeLocation().getDirection(),
