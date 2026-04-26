@@ -1434,7 +1434,12 @@ public final class GameSession {
     }
 
     public void sendTurnStatusActionBar(Player player) {
-        // Turn status is now rendered on the sidebar scoreboard instead of the action bar.
+        NamedTextColor color = isCurrentTurnPlayer(player.getUniqueId())
+            ? NamedTextColor.YELLOW
+            : getPlayerTeam(player.getUniqueId()) == null
+                ? NamedTextColor.GRAY
+                : NamedTextColor.GOLD;
+        player.sendActionBar(Component.text(getTurnStatusText(player.getUniqueId()), color));
     }
 
     private void showCurrentTurnTitle(Player player) {

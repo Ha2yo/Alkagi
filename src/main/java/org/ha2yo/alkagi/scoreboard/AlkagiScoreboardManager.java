@@ -23,7 +23,7 @@ import org.jetbrains.annotations.Nullable;
 public final class AlkagiScoreboardManager {
 
     private static final String OBJECTIVE_NAME = "alkagi";
-    private static final Component TITLE = Component.text("알까기", NamedTextColor.GOLD);
+    private static final Component TITLE = Component.text("현황판", NamedTextColor.GOLD);
     private static final String[] LINE_KEYS = {
         "\u00A70",
         "\u00A71",
@@ -67,14 +67,9 @@ public final class AlkagiScoreboardManager {
             objective.setDisplaySlot(DisplaySlot.SIDEBAR);
             objective.numberFormat(NumberFormat.blank());
 
-            addLine(scoreboard, objective, 7, 0, buildPieceCountLine(session));
-            addLine(scoreboard, objective, 6, 1, Component.empty());
-            addLine(scoreboard, objective, 5, 2, buildTeamLine(session, player));
-            addLine(scoreboard, objective, 4, 3, buildStatusLine(session, player));
-            addLine(scoreboard, objective, 3, 4, Component.empty());
-            addLine(scoreboard, objective, 2, 5, Component.text("현재 턴", NamedTextColor.WHITE));
-            addLine(scoreboard, objective, 1, 6, Component.text(session.getCurrentTurnDisplayText(), NamedTextColor.YELLOW));
-            addLine(scoreboard, objective, 0, 7, buildTimerLine(session));
+            addLine(scoreboard, objective, 2, 0, Component.empty());
+            addLine(scoreboard, objective, 1, 1, buildPieceCountLine(session));
+            addLine(scoreboard, objective, 0, 2, buildTeamLine(session, player));
 
             player.setScoreboard(scoreboard);
         }
@@ -118,22 +113,6 @@ public final class AlkagiScoreboardManager {
         return Component.text()
             .append(Component.text("당신은 ", NamedTextColor.WHITE))
             .append(Component.text(session.getPlayerTeamStatusText(player.getUniqueId()), teamColor))
-            .build();
-    }
-
-    private Component buildStatusLine(GameSession session, Player player) {
-        NamedTextColor color = session.isCurrentTurnPlayer(player.getUniqueId())
-            ? NamedTextColor.YELLOW
-            : session.getPlayerTeam(player.getUniqueId()) == null
-                ? NamedTextColor.GRAY
-                : NamedTextColor.GOLD;
-        return Component.text(session.getTurnStatusText(player.getUniqueId()), color);
-    }
-
-    private Component buildTimerLine(GameSession session) {
-        return Component.text()
-            .append(Component.text("남은 시간 ", NamedTextColor.RED))
-            .append(Component.text(session.getRemainingTurnSeconds() + "초", NamedTextColor.WHITE))
             .build();
     }
 
