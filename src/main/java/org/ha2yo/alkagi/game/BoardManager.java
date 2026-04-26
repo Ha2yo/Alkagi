@@ -1,5 +1,9 @@
 package org.ha2yo.alkagi.game;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -13,6 +17,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
@@ -40,11 +45,14 @@ import java.util.UUID;
  * 말 생성, 배치, 발사, 충돌, 탈락 등 보드 위 물리 처리를 담당한다.
  */
 public final class BoardManager {
-    private static final NamespacedKey BLACK_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/black");
-    private static final NamespacedKey WHITE_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/white");
+    private static final NamespacedKey BLUE_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/white");
+    private static final NamespacedKey RED_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/white");
     private static final String PIECE_ENTITY_MARKER = "piece";
 
     private static final double DISPLAY_FOOTPRINT_SCALE = 0.57D;
+    private static final double LABEL_FOOTPRINT_SCALE = 4.0D;
+    private static final float LABEL_BOLD_OFFSET = 0.01F;
+    private static final float LABEL_DEPTH_OFFSET = 0.65F;
     private static final double FRICTION = 0.86D;
     private static final double ROLLING_RESISTANCE = 0.035D;
     private static final double STOP_THRESHOLD = 0.05D;
@@ -121,6 +129,16 @@ public final class BoardManager {
     }
 
     public PieceData spawnPiece(TeamType teamType, int pieceId, Location location, double pieceSize) {
+        return spawnPiece(teamType, pieceId, location, pieceSize, null);
+    }
+
+    public PieceData spawnPiece(
+            TeamType teamType,
+            int pieceId,
+            Location location,
+            double pieceSize,
+            @Nullable String labelText
+    ) {
         Location spawnLocation = normalizePieceLocation(location);
         World world = spawnLocation.getWorld();
         if (world == null) {
@@ -141,14 +159,13 @@ public final class BoardManager {
 
         Interaction interaction = (Interaction) world.spawnEntity(spawnLocation, EntityType.INTERACTION);
         interaction.setResponsive(true);
-        PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation, pieceSize);
+        PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation, pieceSize, labelText);
         configureInteractionHitbox(interaction, pieceData);
         markPieceEntity(interaction);
 
         ItemDisplay display = (ItemDisplay) world.spawnEntity(spawnLocation, EntityType.ITEM_DISPLAY);
         display.setItemStack(createPieceItem(teamType));
         display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
-        display.setBrightness(new Display.Brightness(15, 15));
         display.setInterpolationDuration(1);
         display.setViewRange(256.0F);
         configurePieceDisplay(display, pieceData);
@@ -157,16 +174,17 @@ public final class BoardManager {
         pieceData.setEntity(armorStand);
         pieceData.setInteractionEntity(interaction);
         pieceData.setDisplayEntity(display);
+        spawnPieceLabels(pieceData);
         pieceByEntityId.put(interaction.getUniqueId(), pieceData);
         return pieceData;
     }
 
     private ItemStack createPieceItem(TeamType teamType) {
-        Material material = teamType == TeamType.BLACK ? Material.FIRE_CHARGE : Material.SNOWBALL;
+        Material material = teamType == TeamType.BLUE ? Material.FIRE_CHARGE : Material.SNOWBALL;
         ItemStack itemStack = new ItemStack(material);
         ItemMeta meta = itemStack.getItemMeta();
         if (meta != null) {
-            meta.setItemModel(teamType == TeamType.BLACK ? BLACK_PIECE_ITEM_MODEL : WHITE_PIECE_ITEM_MODEL);
+            meta.setItemModel(teamType == TeamType.BLUE ? BLUE_PIECE_ITEM_MODEL : RED_PIECE_ITEM_MODEL);
             itemStack.setItemMeta(meta);
         }
         return itemStack;
@@ -235,6 +253,52 @@ public final class BoardManager {
             if (display != null) {
                 configurePieceDisplay(display, piece);
             }
+            TextDisplay labelBold = piece.getLabelBoldEntity();
+            if (labelBold != null) {
+                configurePieceLabel(labelBold, piece, -LABEL_BOLD_OFFSET);
+            }
+            TextDisplay label = piece.getLabelEntity();
+            if (label != null) {
+                configurePieceLabel(label, piece, LABEL_BOLD_OFFSET);
+            }
+        }
+    }
+
+    public void updatePieceLabel(PieceData pieceData, String labelText) {
+        pieceData.setLabelText(labelText);
+        removePieceLabels(pieceData);
+        spawnPieceLabels(pieceData);
+    }
+
+    private void spawnPieceLabels(PieceData pieceData) {
+        Location location = pieceData.getLocation();
+        World world = location.getWorld();
+        if (world == null) {
+            return;
+        }
+
+        TextDisplay labelBold = (TextDisplay) world.spawnEntity(location, EntityType.TEXT_DISPLAY);
+        configurePieceLabel(labelBold, pieceData, -LABEL_BOLD_OFFSET);
+        markPieceEntity(labelBold);
+        pieceData.setLabelBoldEntity(labelBold);
+
+        TextDisplay label = (TextDisplay) world.spawnEntity(location, EntityType.TEXT_DISPLAY);
+        configurePieceLabel(label, pieceData, LABEL_BOLD_OFFSET);
+        markPieceEntity(label);
+        pieceData.setLabelEntity(label);
+    }
+
+    private void removePieceLabels(PieceData pieceData) {
+        TextDisplay label = pieceData.getLabelEntity();
+        if (label != null) {
+            label.remove();
+            pieceData.setLabelEntity(null);
+        }
+
+        TextDisplay labelBold = pieceData.getLabelBoldEntity();
+        if (labelBold != null) {
+            labelBold.remove();
+            pieceData.setLabelBoldEntity(null);
         }
     }
 
@@ -317,13 +381,51 @@ public final class BoardManager {
 
     private void configurePieceDisplay(ItemDisplay display, PieceData pieceData) {
         float pieceSize = (float) pieceData.getPieceSize();
-        float lift = Math.max(0.10F, pieceSize * 0.18F);
+        float heightScale = (float) DEFAULT_PIECE_SIZE * 3.0F;
+        float lift = Math.max(3.1F, (float) DEFAULT_PIECE_SIZE * 0.635F);
         display.setTransformation(new Transformation(
                 new Vector3f(0.0F, lift, 0.0F),
                 new AxisAngle4f(),
-                new Vector3f(pieceSize, pieceSize * 0.42F, pieceSize),
+                new Vector3f(pieceSize, heightScale, pieceSize),
                 new AxisAngle4f()
         ));
+    }
+
+    private void configurePieceLabel(TextDisplay label, PieceData pieceData, float boldOffset) {
+        float pieceSize = (float) pieceData.getPieceSize();
+        float sizeRatio = pieceSize / (float) DEFAULT_PIECE_SIZE;
+        float labelScale = (float) (pieceSize * DISPLAY_FOOTPRINT_SCALE * LABEL_FOOTPRINT_SCALE);
+        float scaledBoldOffset = boldOffset * sizeRatio;
+        float scaledDepthOffset = LABEL_DEPTH_OFFSET * sizeRatio;
+        label.text(Component.text(
+                getPieceLabelText(pieceData),
+                getPieceLabelColor(pieceData.getTeamType()),
+                TextDecoration.BOLD
+        ));
+        label.setAlignment(TextDisplay.TextAlignment.CENTER);
+        label.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+        label.setBillboard(Display.Billboard.FIXED);
+        label.setInterpolationDuration(1);
+        label.setLineWidth(200);
+        label.setSeeThrough(false);
+        label.setShadowed(false);
+        label.setTextOpacity((byte) 255);
+        label.setViewRange(256.0F);
+        label.setRotation(0.0F, -90.0F);
+        label.setTransformation(new Transformation(
+                new Vector3f(scaledBoldOffset, 0.25F, scaledDepthOffset),
+                new AxisAngle4f((float) Math.toRadians(-90.0D), 1.0F, 0.0F, 0.0F),
+                new Vector3f(labelScale, labelScale, labelScale),
+                new AxisAngle4f()
+        ));
+    }
+
+    private String getPieceLabelText(PieceData pieceData) {
+        return pieceData.getLabelText();
+    }
+
+    private NamedTextColor getPieceLabelColor(TeamType teamType) {
+        return teamType == TeamType.BLUE ? NamedTextColor.BLUE : NamedTextColor.RED;
     }
 
     private void markPieceEntity(Entity entity) {
@@ -371,7 +473,7 @@ public final class BoardManager {
             return false;
         }
         NamespacedKey itemModel = meta.getItemModel();
-        return BLACK_PIECE_ITEM_MODEL.equals(itemModel) || WHITE_PIECE_ITEM_MODEL.equals(itemModel);
+        return BLUE_PIECE_ITEM_MODEL.equals(itemModel) || RED_PIECE_ITEM_MODEL.equals(itemModel);
     }
 
     private boolean isNearBoard(Location location, double horizontalMargin, double verticalMargin) {

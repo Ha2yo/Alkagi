@@ -6,8 +6,8 @@ import net.kyori.adventure.text.format.NamedTextColor;
  * 알까기에서 사용하는 팀 종류와 표시 색상을 정의한다.
  */
 public enum TeamType {
-    BLACK("흑", NamedTextColor.DARK_GRAY),
-    WHITE("백", NamedTextColor.WHITE);
+    BLUE("청", NamedTextColor.BLUE),
+    RED("홍", NamedTextColor.RED);
 
     private final String displayName;
     private final NamedTextColor color;
@@ -29,6 +29,6 @@ public enum TeamType {
      * 상대 팀을 반환한다.
      */
     public TeamType opposite() {
-        return this == BLACK ? WHITE : BLACK;
+        return this == BLUE ? RED : BLUE;
     }
 }

@@ -95,19 +95,19 @@ public final class AlkagiScoreboardManager {
 
     private Component buildPieceCountLine(GameSession session) {
         return Component.text()
-            .append(Component.text("흑 ", NamedTextColor.GRAY))
-            .append(Component.text(session.getAlivePieceCount(TeamType.BLACK), NamedTextColor.WHITE))
+            .append(Component.text("청 ", TeamType.BLUE.getColor()))
+            .append(Component.text(session.getAlivePieceCount(TeamType.BLUE), NamedTextColor.WHITE))
             .append(Component.text(" vs ", NamedTextColor.DARK_GRAY))
-            .append(Component.text("백 ", NamedTextColor.GRAY))
-            .append(Component.text(session.getAlivePieceCount(TeamType.WHITE), NamedTextColor.WHITE))
+            .append(Component.text("홍 ", TeamType.RED.getColor()))
+            .append(Component.text(session.getAlivePieceCount(TeamType.RED), NamedTextColor.WHITE))
             .build();
     }
 
     private Component buildTeamLine(GameSession session, Player player) {
         TeamType teamType = session.getPlayerTeam(player.getUniqueId());
         NamedTextColor teamColor = switch (teamType) {
-            case BLACK -> NamedTextColor.GRAY;
-            case WHITE -> NamedTextColor.WHITE;
+            case BLUE -> TeamType.BLUE.getColor();
+            case RED -> TeamType.RED.getColor();
             case null -> NamedTextColor.DARK_GRAY;
         };
         return Component.text()

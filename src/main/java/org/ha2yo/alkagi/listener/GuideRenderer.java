@@ -46,8 +46,8 @@ public final class GuideRenderer {
     private static final double ARM_HORIZONTAL_PITCH = Math.toRadians(270.0D);
     private static final double ARM_HEAD_YAW = Math.toRadians(24.0D);
     private static final double RING_POINT_SPACING = 0.2D;
-    private static final Particle.DustOptions BLACK_DUST = new Particle.DustOptions(Color.fromRGB(32, 32, 32), 1.45F);
-    private static final Particle.DustOptions WHITE_DUST = new Particle.DustOptions(Color.fromRGB(245, 245, 245), 1.45F);
+    private static final Particle.DustOptions BLUE_DUST = new Particle.DustOptions(Color.fromRGB(40, 95, 255), 1.45F);
+    private static final Particle.DustOptions RED_DUST = new Particle.DustOptions(Color.fromRGB(230, 45, 45), 1.45F);
     private static final Particle.DustOptions GREEN_DUST = new Particle.DustOptions(Color.fromRGB(110, 255, 110), 1.5F);
     private static final Particle.DustOptions CYAN_DUST = new Particle.DustOptions(Color.fromRGB(105, 220, 235), 1.4F);
 
@@ -166,7 +166,7 @@ public final class GuideRenderer {
     }
 
     private void drawPlacementMarker(Player viewer, Location target, TeamType teamType) {
-        Particle.DustOptions dust = teamType == TeamType.BLACK ? BLACK_DUST : WHITE_DUST;
+        Particle.DustOptions dust = teamType == TeamType.BLUE ? BLUE_DUST : RED_DUST;
         double radius = gameManager.getBoardManager().getPieceRadius();
         drawRing(viewer, target, radius, dust, 18);
     }

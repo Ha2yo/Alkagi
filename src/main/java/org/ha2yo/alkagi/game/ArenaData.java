@@ -20,8 +20,8 @@ public final class ArenaData {
     private Location boardPos1;
     private Location boardPos2;
     private Location spectatorLocation;
-    private Location blackPlacementLocation;
-    private Location whitePlacementLocation;
+    private Location bluePlacementLocation;
+    private Location redPlacementLocation;
     private double pieceSize = DEFAULT_PIECE_SIZE;
     private int turnTimeSeconds = DEFAULT_TURN_TIME_SECONDS;
 
@@ -34,8 +34,8 @@ public final class ArenaData {
         arenaData.boardPos1 = readLocation(config, "arena.board.pos1");
         arenaData.boardPos2 = readLocation(config, "arena.board.pos2");
         arenaData.spectatorLocation = readLocation(config, "arena.spectator");
-        arenaData.blackPlacementLocation = readLocation(config, "arena.placement.black");
-        arenaData.whitePlacementLocation = readLocation(config, "arena.placement.white");
+        arenaData.bluePlacementLocation = readLocationWithFallback(config, "arena.placement.blue", "arena.placement.black");
+        arenaData.redPlacementLocation = readLocationWithFallback(config, "arena.placement.red", "arena.placement.white");
         arenaData.pieceSize = Math.max(0.5D, config.getDouble("settings.piece-size", DEFAULT_PIECE_SIZE));
         arenaData.turnTimeSeconds = Math.max(1, config.getInt("settings.turn-time-seconds", DEFAULT_TURN_TIME_SECONDS));
         return arenaData;
@@ -49,8 +49,10 @@ public final class ArenaData {
         writeLocation(config, "arena.board.pos1", boardPos1);
         writeLocation(config, "arena.board.pos2", boardPos2);
         writeLocation(config, "arena.spectator", spectatorLocation);
-        writeLocation(config, "arena.placement.black", blackPlacementLocation);
-        writeLocation(config, "arena.placement.white", whitePlacementLocation);
+        writeLocation(config, "arena.placement.blue", bluePlacementLocation);
+        writeLocation(config, "arena.placement.red", redPlacementLocation);
+        config.set("arena.placement.black", null);
+        config.set("arena.placement.white", null);
         config.set("settings.piece-size", pieceSize);
         config.set("settings.control-radius", null);
         config.set("settings.turn-time-seconds", turnTimeSeconds);
@@ -90,16 +92,16 @@ public final class ArenaData {
 
     public @Nullable Location getPlacementLocation(TeamType teamType) {
         return switch (teamType) {
-            case BLACK -> cloneLocation(blackPlacementLocation);
-            case WHITE -> cloneLocation(whitePlacementLocation);
+            case BLUE -> cloneLocation(bluePlacementLocation);
+            case RED -> cloneLocation(redPlacementLocation);
         };
     }
 
     public void setPlacementLocation(TeamType teamType, Location location) {
-        if (teamType == TeamType.BLACK) {
-            this.blackPlacementLocation = location.clone();
+        if (teamType == TeamType.BLUE) {
+            this.bluePlacementLocation = location.clone();
         } else {
-            this.whitePlacementLocation = location.clone();
+            this.redPlacementLocation = location.clone();
         }
     }
 
@@ -222,6 +224,11 @@ public final class ArenaData {
             (float) config.getDouble(path + ".yaw"),
             (float) config.getDouble(path + ".pitch")
         );
+    }
+
+    private static @Nullable Location readLocationWithFallback(FileConfiguration config, String path, String legacyPath) {
+        Location location = readLocation(config, path);
+        return location != null ? location : readLocation(config, legacyPath);
     }
 
     private static void writeLocation(FileConfiguration config, String path, @Nullable Location location) {

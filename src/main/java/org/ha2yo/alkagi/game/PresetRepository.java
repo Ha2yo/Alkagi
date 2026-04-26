@@ -52,16 +52,18 @@ public final class PresetRepository {
 
         PresetData presetData = new PresetData(presetName);
         double legacyPieceSize = Math.max(0.5D, section.getDouble("piece-size", 2.35D));
-        readTeamLocations(section, "black", TeamType.BLACK, presetData, legacyPieceSize);
-        readTeamLocations(section, "white", TeamType.WHITE, presetData, legacyPieceSize);
+        readTeamLocations(section, "blue", "black", TeamType.BLUE, presetData, legacyPieceSize);
+        readTeamLocations(section, "red", "white", TeamType.RED, presetData, legacyPieceSize);
         return presetData;
     }
 
     public void savePreset(PresetData presetData) {
         String path = "presets." + presetData.getName();
         config.set(path + ".piece-size", null);
-        writeTeamLocations(path + ".black", presetData.getPieces(TeamType.BLACK));
-        writeTeamLocations(path + ".white", presetData.getPieces(TeamType.WHITE));
+        writeTeamLocations(path + ".blue", presetData.getPieces(TeamType.BLUE));
+        writeTeamLocations(path + ".red", presetData.getPieces(TeamType.RED));
+        config.set(path + ".black", null);
+        config.set(path + ".white", null);
         save();
     }
 
@@ -78,15 +80,19 @@ public final class PresetRepository {
     private void readTeamLocations(
             ConfigurationSection section,
             String teamKey,
+            String legacyTeamKey,
             TeamType teamType,
             PresetData presetData,
             double defaultPieceSize
     ) {
         List<java.util.Map<?, ?>> rawList = section.getMapList(teamKey);
+        if (rawList.isEmpty()) {
+            rawList = section.getMapList(legacyTeamKey);
+        }
         for (java.util.Map<?, ?> raw : rawList) {
             Location location = readLocation(raw);
             if (location != null) {
-                presetData.addPiece(teamType, location, readPieceSize(raw, defaultPieceSize));
+                presetData.addPiece(teamType, location, readPieceSize(raw, defaultPieceSize), readLabelText(raw));
             }
         }
     }
@@ -105,6 +111,9 @@ public final class PresetRepository {
             entry.put("y", location.getY());
             entry.put("z", location.getZ());
             entry.put("size", piece.pieceSize());
+            if (piece.labelText() != null) {
+                entry.put("label", piece.labelText());
+            }
             serialized.add(entry);
         }
         config.set(path, serialized);
@@ -141,6 +150,16 @@ public final class PresetRepository {
             return defaultPieceSize;
         }
         return Math.max(0.5D, toDouble(value));
+    }
+
+    private @Nullable String readLabelText(java.util.Map<?, ?> map) {
+        Object value = map.get("label");
+        if (!(value instanceof String labelText)) {
+            return null;
+        }
+
+        String trimmed = labelText.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private void save() {

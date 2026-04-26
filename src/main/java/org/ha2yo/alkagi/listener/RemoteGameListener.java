@@ -188,6 +188,14 @@ public final class RemoteGameListener implements Listener {
     @EventHandler
     public void onInteractEntity(PlayerInteractAtEntityEvent event) {
         Player player = event.getPlayer();
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+
+        if (presetEditor.isEditing(player.getUniqueId())
+                && player.getInventory().getItemInMainHand().getType() == Material.BLAZE_ROD) {
+            handlePresetEditEntityInteract(event, player, presetEditor);
+            return;
+        }
+
         GameSession session = gameManager.getSession();
 
         if (!session.isUsingRemoteController(player)
@@ -274,6 +282,29 @@ public final class RemoteGameListener implements Listener {
         player.sendMessage(Component.text(
                 teamType.getDisplayName() + " 프리셋 돌 배치: " + presetEditor.getPlacedCount(teamType),
                 teamType.getColor()
+        ));
+    }
+
+    private void handlePresetEditEntityInteract(
+            PlayerInteractAtEntityEvent event,
+            Player player,
+            PresetEditor presetEditor
+    ) {
+        if (!(event.getRightClicked() instanceof Interaction interaction)
+                || !gameManager.getBoardManager().isPieceSelectionEntity(interaction.getUniqueId())) {
+            return;
+        }
+
+        PieceData pieceData = gameManager.getBoardManager().findPieceByEntity(interaction.getUniqueId());
+        if (pieceData == null || !presetEditor.relabelPiece(pieceData)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        player.sendMessage(Component.text(
+                pieceData.getTeamType().getDisplayName() + " 말 글자를 "
+                        + pieceData.getLabelText() + " 로 변경했습니다.",
+                pieceData.getTeamType().getColor()
         ));
     }
 

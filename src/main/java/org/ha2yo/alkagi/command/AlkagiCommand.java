@@ -28,11 +28,15 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
     private static final List<String> SUBCOMMANDS = List.of(
         "status", "start", "forcestart", "stop", "reset",
         "setboardpos1", "setboardpos2", "setlobby", "setspectator",
-        "setblackplace", "setwhiteplace", "setturntime", "setpiecesize", "setcontrolradius",
+        "setblueplace", "setredplace", "setturntime", "setpiecesize", "setcontrolradius",
         "preset"
     );
     private static final List<String> PRESET_SUBCOMMANDS = List.of(
-        "list", "edit", "team", "save", "clear", "cancel", "delete"
+        "list", "edit", "team", "label", "relabel", "save", "clear", "cancel", "delete"
+    );
+    private static final List<String> PRESET_LABEL_SUGGESTIONS = List.of(
+        "楚", "士", "车", "包", "马", "象", "卒",
+            "漢", "士", "車", "包", "馬", "象", "兵"
     );
 
     private final GameManager gameManager;
@@ -58,8 +62,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "setboardpos2" -> handleSetBoard(sender, false);
             case "setlobby" -> handleSetLobby(sender);
             case "setspectator" -> handleSetSpectator(sender);
-            case "setblackplace" -> handleSetPlacement(sender, TeamType.BLACK);
-            case "setwhiteplace" -> handleSetPlacement(sender, TeamType.WHITE);
+            case "setblueplace", "setblackplace" -> handleSetPlacement(sender, TeamType.BLUE);
+            case "setredplace", "setwhiteplace" -> handleSetPlacement(sender, TeamType.RED);
             case "setturntime" -> handleSetTurnTime(sender, args);
             case "setpiecesize" -> handleSetPieceSize(sender, args);
             case "setcontrolradius" -> handleSetControlRadius(sender);
@@ -374,6 +378,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "list" -> handlePresetList(sender);
             case "edit" -> handlePresetEdit(sender, args);
             case "team" -> handlePresetTeam(sender, args);
+            case "label" -> handlePresetLabel(sender, args);
+            case "relabel" -> handlePresetRelabel(sender, args);
             case "save" -> handlePresetSave(sender);
             case "clear" -> handlePresetClear(sender);
             case "cancel" -> handlePresetCancel(sender);
@@ -423,7 +429,11 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(Component.text("프리셋 편집을 시작했습니다: " + args[2], NamedTextColor.GREEN));
         sender.sendMessage(Component.text("블레이즈 막대를 들고 우클릭하면 현재 팀 말이 배치되고, 좌클릭하면 마지막 말이 삭제됩니다.", NamedTextColor.YELLOW));
-        sender.sendMessage(Component.text("현재 팀: " + gameManager.getPresetEditor().getSelectedTeam().getDisplayName(), NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text(
+            "현재 팀: " + gameManager.getPresetEditor().getSelectedTeam().getDisplayName()
+                + " / 글자: " + gameManager.getPresetEditor().getLabelText(),
+            NamedTextColor.YELLOW
+        ));
         return true;
     }
 
@@ -434,13 +444,13 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (args.length < 3) {
-            sender.sendMessage(Component.text("/alkagi preset team <black|white> [size]", NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text("/alkagi preset team <blue|red> [size] [label]", NamedTextColor.YELLOW));
             return true;
         }
 
         TeamType teamType = parseTeamType(args[2]);
         if (teamType == null) {
-            sender.sendMessage(Component.text("팀은 black 또는 white 로 입력해 주세요.", NamedTextColor.RED));
+            sender.sendMessage(Component.text("팀은 blue 또는 red 로 입력해 주세요.", NamedTextColor.RED));
             return true;
         }
 
@@ -453,25 +463,74 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             }
             presetEditor.setPieceSize(size);
         }
+        if (args.length >= 5) {
+            presetEditor.setLabelText(joinArgs(args, 4));
+        }
 
         sender.sendMessage(Component.text(
             "현재 프리셋 팀을 " + teamType.getDisplayName() + " 으로 변경했습니다. 말 크기: "
-                + String.format("%.2f", presetEditor.getPieceSize()),
+                + String.format("%.2f", presetEditor.getPieceSize())
+                + " / 글자: " + presetEditor.getLabelText(),
             teamType.getColor()
+        ));
+        return true;
+    }
+
+    private boolean handlePresetLabel(CommandSender sender, String[] args) {
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+        if (!presetEditor.isEditing()) {
+            sender.sendMessage(Component.text("먼저 /alkagi preset edit <이름> 으로 편집을 시작해 주세요.", NamedTextColor.RED));
+            return true;
+        }
+        if (args.length < 3) {
+            sender.sendMessage(Component.text("/alkagi preset label <글자>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        presetEditor.setLabelText(joinArgs(args, 2));
+        sender.sendMessage(Component.text(
+            "현재 프리셋 말 글자를 " + presetEditor.getLabelText()
+                + " 로 지정했습니다. 블레이즈 막대로 말을 우클릭하면 해당 말에 적용됩니다.",
+            presetEditor.getSelectedTeam().getColor()
+        ));
+        return true;
+    }
+
+    private boolean handlePresetRelabel(CommandSender sender, String[] args) {
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+        if (!presetEditor.isEditing()) {
+            sender.sendMessage(Component.text("먼저 /alkagi preset edit <이름> 으로 편집을 시작해 주세요.", NamedTextColor.RED));
+            return true;
+        }
+        if (args.length < 3) {
+            sender.sendMessage(Component.text("/alkagi preset relabel <글자>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        boolean updated = presetEditor.relabelLastPlacedPiece(joinArgs(args, 2));
+        if (!updated) {
+            sender.sendMessage(Component.text("현재 선택된 팀에 수정할 말이 없습니다.", NamedTextColor.RED));
+            return true;
+        }
+
+        sender.sendMessage(Component.text(
+            "마지막으로 배치한 " + presetEditor.getSelectedTeam().getDisplayName()
+                + " 말 글자를 " + presetEditor.getLabelText() + " 로 변경했습니다.",
+            presetEditor.getSelectedTeam().getColor()
         ));
         return true;
     }
 
     private boolean handlePresetSave(CommandSender sender) {
         PresetEditor presetEditor = gameManager.getPresetEditor();
-        int blackCount = presetEditor.getPlacedCount(TeamType.BLACK);
-        int whiteCount = presetEditor.getPlacedCount(TeamType.WHITE);
+        int blueCount = presetEditor.getPlacedCount(TeamType.BLUE);
+        int redCount = presetEditor.getPlacedCount(TeamType.RED);
         if (!presetEditor.isEditing()) {
             sender.sendMessage(Component.text("저장할 프리셋 편집 세션이 없습니다.", NamedTextColor.RED));
             return true;
         }
-        if (blackCount <= 0 || blackCount != whiteCount) {
-            sender.sendMessage(Component.text("흑백 돌 수가 같고 최소 1개 이상 있어야 프리셋으로 저장할 수 있습니다.", NamedTextColor.RED));
+        if (blueCount <= 0 || blueCount != redCount) {
+            sender.sendMessage(Component.text("청홍 돌 수가 같고 최소 1개 이상 있어야 프리셋으로 저장할 수 있습니다.", NamedTextColor.RED));
             return true;
         }
 
@@ -555,8 +614,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             && arenaData.getBoardPos1() != null
             && arenaData.getBoardPos2() != null
             && arenaData.getSpectatorLocation() != null
-            && arenaData.getPlacementLocation(TeamType.BLACK) != null
-            && arenaData.getPlacementLocation(TeamType.WHITE) != null;
+            && arenaData.getPlacementLocation(TeamType.BLUE) != null
+            && arenaData.getPlacementLocation(TeamType.RED) != null;
     }
 
     private boolean isPresetArenaReady() {
@@ -594,8 +653,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
 
     private @Nullable TeamType parseTeamType(String value) {
         return switch (value.toLowerCase()) {
-            case "black", "흑", "blackteam" -> TeamType.BLACK;
-            case "white", "백", "whiteteam" -> TeamType.WHITE;
+            case "blue", "청", "blueteam", "black", "흑", "blackteam" -> TeamType.BLUE;
+            case "red", "홍", "redteam", "white", "백", "whiteteam" -> TeamType.RED;
             default -> null;
         };
     }
@@ -639,7 +698,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
                 case "edit", "delete" -> gameManager.getPresetRepository().listPresetNames().stream()
                     .filter(option -> option.toLowerCase().startsWith(args[2].toLowerCase()))
                     .toList();
-                case "team" -> List.of("black", "white");
+                case "team" -> List.of("blue", "red");
+                case "label", "relabel" -> PRESET_LABEL_SUGGESTIONS;
                 default -> new ArrayList<>();
             };
         }
@@ -649,5 +709,9 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         return new ArrayList<>();
+    }
+
+    private String joinArgs(String[] args, int startIndex) {
+        return String.join(" ", java.util.Arrays.copyOfRange(args, startIndex, args.length));
     }
 }

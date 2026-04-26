@@ -10,10 +10,15 @@ import java.util.Map;
 
 public final class PresetData {
 
-    public record PresetPiece(Location location, double pieceSize) {
+    public record PresetPiece(Location location, double pieceSize, @Nullable String labelText) {
+        public PresetPiece(Location location, double pieceSize) {
+            this(location, pieceSize, null);
+        }
+
         public PresetPiece {
             location = location.clone();
             pieceSize = Math.max(0.5D, pieceSize);
+            labelText = normalizeLabelText(labelText);
         }
     }
 
@@ -22,8 +27,8 @@ public final class PresetData {
 
     public PresetData(String name) {
         this.name = name;
-        piecesByTeam.put(TeamType.BLACK, new ArrayList<>());
-        piecesByTeam.put(TeamType.WHITE, new ArrayList<>());
+        piecesByTeam.put(TeamType.BLUE, new ArrayList<>());
+        piecesByTeam.put(TeamType.RED, new ArrayList<>());
     }
 
     public String getName() {
@@ -31,21 +36,25 @@ public final class PresetData {
     }
 
     public void addPiece(TeamType teamType, Location location, double pieceSize) {
-        piecesByTeam.get(teamType).add(new PresetPiece(location, pieceSize));
+        addPiece(teamType, location, pieceSize, null);
+    }
+
+    public void addPiece(TeamType teamType, Location location, double pieceSize, @Nullable String labelText) {
+        piecesByTeam.get(teamType).add(new PresetPiece(location, pieceSize, labelText));
     }
 
     public List<PresetPiece> getPieces(TeamType teamType) {
         return piecesByTeam.get(teamType).stream()
-            .map(piece -> new PresetPiece(piece.location(), piece.pieceSize()))
+            .map(piece -> new PresetPiece(piece.location(), piece.pieceSize(), piece.labelText()))
             .toList();
     }
 
     public int getPieceCount() {
-        return piecesByTeam.get(TeamType.BLACK).size();
+        return piecesByTeam.get(TeamType.BLUE).size();
     }
 
     public boolean isBalanced() {
-        return piecesByTeam.get(TeamType.BLACK).size() == piecesByTeam.get(TeamType.WHITE).size();
+        return piecesByTeam.get(TeamType.BLUE).size() == piecesByTeam.get(TeamType.RED).size();
     }
 
     public boolean isEmpty() {
@@ -60,5 +69,14 @@ public final class PresetData {
             }
         }
         return null;
+    }
+
+    private static @Nullable String normalizeLabelText(@Nullable String labelText) {
+        if (labelText == null) {
+            return null;
+        }
+
+        String trimmed = labelText.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

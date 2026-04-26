@@ -48,15 +48,17 @@ public final class GameSession {
 
     private static final String REMOTE_CONTROLLER_KEY = "remote_controller";
     private static final String TEAM_ARMOR_KEY = "team_armor";
-    private static final String TAB_TEAM_BLACK = "00_alkagi_black";
-    private static final String TAB_TEAM_WHITE = "01_alkagi_white";
+    private static final String TAB_TEAM_BLUE = "00_alkagi_blue";
+    private static final String TAB_TEAM_RED = "01_alkagi_red";
+    private static final String LEGACY_TAB_TEAM_BLACK = "00_alkagi_black";
+    private static final String LEGACY_TAB_TEAM_WHITE = "01_alkagi_white";
     private static final String TAB_TEAM_SPECTATOR = "02_alkagi_spectator";
 
     private static final long LAUNCH_GUARD_MILLIS = 500L;
     private static final String GAME_MUSIC_SOUND_KEY = "alkagi.ingame";
     private static final float GAME_MUSIC_VOLUME = 0.1225F;
     private static final long GAME_MUSIC_LOOP_SECONDS = 120L;
-    private static final NamedTextColor DEFAULT_PLAYER_COLOR = NamedTextColor.BLUE;
+    private static final NamedTextColor DEFAULT_PLAYER_COLOR = NamedTextColor.GRAY;
 
     private static final PotionEffect TURN_SPEED_EFFECT =
         new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 4, false, false, false);
@@ -83,7 +85,7 @@ public final class GameSession {
     private final BossBar turnTimerBar = Bukkit.createBossBar("", BarColor.YELLOW, BarStyle.SOLID);
 
     private GameState gameState = GameState.WAITING;
-    private TeamType currentTurnTeam = TeamType.BLACK;
+    private TeamType currentTurnTeam = TeamType.BLUE;
     private UUID currentTurnPlayer;
     private int configuredPieceCount;
     private PieceData selectedPiece;
@@ -104,10 +106,10 @@ public final class GameSession {
         this.arenaData = arenaData;
         this.scoreboardManager = scoreboardManager;
         this.boardManager = boardManager;
-        teamDataMap.put(TeamType.BLACK, new TeamData(TeamType.BLACK));
-        teamDataMap.put(TeamType.WHITE, new TeamData(TeamType.WHITE));
-        placedCountMap.put(TeamType.BLACK, 0);
-        placedCountMap.put(TeamType.WHITE, 0);
+        teamDataMap.put(TeamType.BLUE, new TeamData(TeamType.BLUE));
+        teamDataMap.put(TeamType.RED, new TeamData(TeamType.RED));
+        placedCountMap.put(TeamType.BLUE, 0);
+        placedCountMap.put(TeamType.RED, 0);
         turnTimerBar.setVisible(false);
         turnTimerBar.setProgress(1.0D);
     }
@@ -242,7 +244,7 @@ public final class GameSession {
         stopGameMusic();
         gameState = GameState.WAITING;
         currentTurnPlayer = null;
-        currentTurnTeam = TeamType.BLACK;
+        currentTurnTeam = TeamType.BLUE;
         configuredPieceCount = 0;
         selectedPiece = null;
         lastSelectedPlayerId = null;
@@ -250,8 +252,8 @@ public final class GameSession {
         openingTurnTeleportDone = false;
         playerTeamMap.clear();
         placementPlayers.clear();
-        placedCountMap.put(TeamType.BLACK, 0);
-        placedCountMap.put(TeamType.WHITE, 0);
+        placedCountMap.put(TeamType.BLUE, 0);
+        placedCountMap.put(TeamType.RED, 0);
         eliminatedPiecesByPlayer.clear();
         ownPiecesEliminatedByPlayer.clear();
 
@@ -283,7 +285,7 @@ public final class GameSession {
     }
 
     /**
-     * 현재 참가자들을 섞어서 흑팀과 백팀으로 균형 있게 나눈다.
+     * 현재 참가자들을 섞어서 청팀과 홍팀으로 균형 있게 나눈다.
      */
     public void assignTeams() {
         playerTeamMap.clear();
@@ -292,27 +294,27 @@ public final class GameSession {
         List<UUID> shuffled = new ArrayList<>(participants);
         Collections.shuffle(shuffled);
 
-        int blackSize = 0;
-        int whiteSize = 0;
-        int targetBlackSize = shuffled.size() / 2;
-        int targetWhiteSize = shuffled.size() - targetBlackSize;
+        int blueSize = 0;
+        int redSize = 0;
+        int targetBlueSize = shuffled.size() / 2;
+        int targetRedSize = shuffled.size() - targetBlueSize;
         for (UUID playerId : shuffled) {
             TeamType teamType;
-            if (blackSize >= targetBlackSize) {
-                teamType = TeamType.WHITE;
-            } else if (whiteSize >= targetWhiteSize) {
-                teamType = TeamType.BLACK;
-            } else if (blackSize <= whiteSize) {
-                teamType = TeamType.BLACK;
+            if (blueSize >= targetBlueSize) {
+                teamType = TeamType.RED;
+            } else if (redSize >= targetRedSize) {
+                teamType = TeamType.BLUE;
+            } else if (blueSize <= redSize) {
+                teamType = TeamType.BLUE;
             } else {
-                teamType = TeamType.WHITE;
+                teamType = TeamType.RED;
             }
             playerTeamMap.put(playerId, teamType);
             teamDataMap.get(teamType).addPlayer(playerId);
-            if (teamType == TeamType.BLACK) {
-                blackSize++;
+            if (teamType == TeamType.BLUE) {
+                blueSize++;
             } else {
-                whiteSize++;
+                redSize++;
             }
             Player player = plugin.getServer().getPlayer(playerId);
             if (player != null) {
@@ -341,8 +343,8 @@ public final class GameSession {
      */
     public void startPlacingPhase() {
         gameState = GameState.PLACING;
-        placedCountMap.put(TeamType.BLACK, 0);
-        placedCountMap.put(TeamType.WHITE, 0);
+        placedCountMap.put(TeamType.BLUE, 0);
+        placedCountMap.put(TeamType.RED, 0);
 
         for (UUID participantId : participants) {
             Player player = plugin.getServer().getPlayer(participantId);
@@ -459,19 +461,19 @@ public final class GameSession {
      * 현재 살아남은 말 수를 기준으로 승리 팀을 판정한다.
      */
     public @Nullable TeamType checkWinner() {
-        if (teamDataMap.get(TeamType.BLACK).getAlivePieceCount() <= 0 && configuredPieceCount > 0) {
-            return TeamType.WHITE;
+        if (teamDataMap.get(TeamType.BLUE).getAlivePieceCount() <= 0 && configuredPieceCount > 0) {
+            return TeamType.RED;
         }
-        if (teamDataMap.get(TeamType.WHITE).getAlivePieceCount() <= 0 && configuredPieceCount > 0) {
-            return TeamType.BLACK;
+        if (teamDataMap.get(TeamType.RED).getAlivePieceCount() <= 0 && configuredPieceCount > 0) {
+            return TeamType.BLUE;
         }
         return null;
     }
 
     private boolean isDraw() {
         return configuredPieceCount > 0
-            && teamDataMap.get(TeamType.BLACK).getAlivePieceCount() <= 0
-            && teamDataMap.get(TeamType.WHITE).getAlivePieceCount() <= 0;
+            && teamDataMap.get(TeamType.BLUE).getAlivePieceCount() <= 0
+            && teamDataMap.get(TeamType.RED).getAlivePieceCount() <= 0;
     }
 
     /**
@@ -584,11 +586,11 @@ public final class GameSession {
 
     public String getPlayerTeamStatusText(UUID playerId) {
         TeamType teamType = playerTeamMap.get(playerId);
-        if (teamType == TeamType.BLACK) {
-            return "흑팀입니다";
+        if (teamType == TeamType.BLUE) {
+            return "청팀입니다";
         }
-        if (teamType == TeamType.WHITE) {
-            return "백팀입니다";
+        if (teamType == TeamType.RED) {
+            return "홍팀입니다";
         }
         return "관전 중입니다";
     }
@@ -623,7 +625,7 @@ public final class GameSession {
     public String getCurrentTurnDisplayText() {
         Player currentPlayer = currentTurnPlayer == null ? null : plugin.getServer().getPlayer(currentTurnPlayer);
         String playerName = currentPlayer == null ? "대기 중" : currentPlayer.getName();
-        return (currentTurnTeam == TeamType.BLACK ? "흑" : "백") + " - " + playerName;
+        return currentTurnTeam.getDisplayName() + " - " + playerName;
     }
 
     public void copyTabTeams(Scoreboard targetScoreboard) {
@@ -633,7 +635,7 @@ public final class GameSession {
         }
 
         Scoreboard mainScoreboard = scoreboardManager.getMainScoreboard();
-        for (String teamName : List.of(TAB_TEAM_BLACK, TAB_TEAM_WHITE, TAB_TEAM_SPECTATOR)) {
+        for (String teamName : List.of(TAB_TEAM_BLUE, TAB_TEAM_RED, TAB_TEAM_SPECTATOR)) {
             Team mainTeam = mainScoreboard.getTeam(teamName);
             if (mainTeam == null) {
                 continue;
@@ -644,8 +646,8 @@ public final class GameSession {
                 targetTeam = targetScoreboard.registerNewTeam(teamName);
             }
             targetTeam.color(switch (teamName) {
-                case TAB_TEAM_BLACK -> TeamType.BLACK.getColor();
-                case TAB_TEAM_WHITE -> TeamType.WHITE.getColor();
+                case TAB_TEAM_BLUE -> TeamType.BLUE.getColor();
+                case TAB_TEAM_RED -> TeamType.RED.getColor();
                 default -> DEFAULT_PLAYER_COLOR;
             });
             targetTeam.prefix(mainTeam.prefix());
@@ -671,21 +673,33 @@ public final class GameSession {
                     return false;
                 }
 
-                teamData.getPieces().add(new PieceData(pieceId++, teamType, spawnLocation, piece.pieceSize()));
+                teamData.getPieces().add(new PieceData(
+                    pieceId++,
+                    teamType,
+                    spawnLocation,
+                    piece.pieceSize(),
+                    piece.labelText()
+                ));
             }
         }
         return true;
     }
 
     private void applyPresetPieces(PresetData presetData) {
-        placedCountMap.put(TeamType.BLACK, 0);
-        placedCountMap.put(TeamType.WHITE, 0);
+        placedCountMap.put(TeamType.BLUE, 0);
+        placedCountMap.put(TeamType.RED, 0);
         for (TeamType teamType : TeamType.values()) {
             TeamData teamData = teamDataMap.get(teamType);
             int pieceId = 1;
             for (PresetData.PresetPiece piece : presetData.getPieces(teamType)) {
                 Location spawnLocation = normalizePlacementLocation(piece.location());
-                teamData.getPieces().add(boardManager.spawnPiece(teamType, pieceId++, spawnLocation, piece.pieceSize()));
+                teamData.getPieces().add(boardManager.spawnPiece(
+                    teamType,
+                    pieceId++,
+                    spawnLocation,
+                    piece.pieceSize(),
+                    piece.labelText()
+                ));
             }
             placedCountMap.put(teamType, teamData.getAlivePieceCount());
         }
@@ -890,7 +904,13 @@ public final class GameSession {
     }
 
     private void removeEntryFromTabTeams(Scoreboard scoreboard, String entry) {
-        for (String teamName : List.of(TAB_TEAM_BLACK, TAB_TEAM_WHITE, TAB_TEAM_SPECTATOR)) {
+        for (String teamName : List.of(
+                TAB_TEAM_BLUE,
+                TAB_TEAM_RED,
+                LEGACY_TAB_TEAM_BLACK,
+                LEGACY_TAB_TEAM_WHITE,
+                TAB_TEAM_SPECTATOR
+        )) {
             Team team = scoreboard.getTeam(teamName);
             if (team != null) {
                 team.removeEntry(entry);
@@ -900,8 +920,8 @@ public final class GameSession {
 
     private Team getOrCreateTabTeam(Scoreboard scoreboard, @Nullable TeamType teamType) {
         String teamName = switch (teamType) {
-            case BLACK -> TAB_TEAM_BLACK;
-            case WHITE -> TAB_TEAM_WHITE;
+            case BLUE -> TAB_TEAM_BLUE;
+            case RED -> TAB_TEAM_RED;
             case null -> TAB_TEAM_SPECTATOR;
         };
 
@@ -1064,7 +1084,7 @@ public final class GameSession {
     }
 
     private void decideOpeningTeam() {
-        TeamType finalTeam = Math.random() < 0.5D ? TeamType.BLACK : TeamType.WHITE;
+        TeamType finalTeam = Math.random() < 0.5D ? TeamType.BLUE : TeamType.RED;
         TeamType previewTeam = finalTeam.opposite();
         runOpeningTeamPreview(finalTeam, previewTeam, 0);
     }
@@ -1288,7 +1308,7 @@ public final class GameSession {
         }
 
         playSoundToParticipants(Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.1F, 1.0F);
-        playSoundToParticipants(Sound.ENTITY_PLAYER_LEVELUP, 0.9F, winner == TeamType.BLACK ? 0.95F : 1.15F);
+        playSoundToParticipants(Sound.ENTITY_PLAYER_LEVELUP, 0.9F, winner == TeamType.BLUE ? 0.95F : 1.15F);
     }
 
     private void playSoundToParticipants(Sound sound, float volume, float pitch) {
@@ -1352,8 +1372,8 @@ public final class GameSession {
     }
 
     private boolean isPlacementComplete() {
-        return getPlacedCount(TeamType.BLACK) >= configuredPieceCount
-            && getPlacedCount(TeamType.WHITE) >= configuredPieceCount;
+        return getPlacedCount(TeamType.BLUE) >= configuredPieceCount
+            && getPlacedCount(TeamType.RED) >= configuredPieceCount;
     }
 
     private void sendToLobby(Player player) {
@@ -1622,7 +1642,7 @@ public final class GameSession {
             return item;
         }
 
-        meta.setColor(teamType == TeamType.BLACK ? Color.fromRGB(30, 30, 30) : Color.WHITE);
+        meta.setColor(teamType == TeamType.BLUE ? Color.fromRGB(40, 95, 255) : Color.fromRGB(230, 45, 45));
         meta.setUnbreakable(true);
         meta.getPersistentDataContainer().set(
             new NamespacedKey(plugin, TEAM_ARMOR_KEY),

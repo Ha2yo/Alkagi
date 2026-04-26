@@ -4,6 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.TextDisplay;
 import org.ha2yo.alkagi.game.TeamType;
 import org.jetbrains.annotations.Nullable;
 
@@ -17,20 +18,29 @@ public final class PieceData {
     private static final double HITBOX_Y_OFFSET = 1.35D;
     private static final double INTERACTION_Y_OFFSET = 0.02D;
     private static final double DISPLAY_Y_OFFSET = -0.18D;
+    private static final double LABEL_Y_OFFSET = 0.6D;
 
     private final int pieceId;
     private final TeamType teamType;
     private final double pieceSize;
+    private String labelText;
     private Location location;
     private boolean alive;
     private ArmorStand entity;
     private Interaction interactionEntity;
     private ItemDisplay displayEntity;
+    private TextDisplay labelEntity;
+    private TextDisplay labelBoldEntity;
 
     public PieceData(int pieceId, TeamType teamType, Location location, double pieceSize) {
+        this(pieceId, teamType, location, pieceSize, null);
+    }
+
+    public PieceData(int pieceId, TeamType teamType, Location location, double pieceSize, @Nullable String labelText) {
         this.pieceId = pieceId;
         this.teamType = teamType;
         this.pieceSize = Math.max(0.5D, pieceSize);
+        this.labelText = normalizeLabelText(teamType, labelText);
         this.location = normalizeLocation(location);
         this.alive = true;
     }
@@ -45,6 +55,14 @@ public final class PieceData {
 
     public double getPieceSize() {
         return pieceSize;
+    }
+
+    public String getLabelText() {
+        return labelText;
+    }
+
+    public void setLabelText(@Nullable String labelText) {
+        this.labelText = normalizeLabelText(teamType, labelText);
     }
 
     public Location getLocation() {
@@ -64,6 +82,12 @@ public final class PieceData {
         }
         if (displayEntity != null) {
             displayEntity.teleport(this.location.clone().subtract(0.0D, DISPLAY_Y_OFFSET, 0.0D));
+        }
+        if (labelEntity != null) {
+            labelEntity.teleport(getLabelLocation());
+        }
+        if (labelBoldEntity != null) {
+            labelBoldEntity.teleport(getLabelLocation());
         }
     }
 
@@ -87,6 +111,14 @@ public final class PieceData {
         if (!alive && displayEntity != null) {
             displayEntity.remove();
             displayEntity = null;
+        }
+        if (!alive && labelEntity != null) {
+            labelEntity.remove();
+            labelEntity = null;
+        }
+        if (!alive && labelBoldEntity != null) {
+            labelBoldEntity.remove();
+            labelBoldEntity = null;
         }
     }
 
@@ -123,11 +155,50 @@ public final class PieceData {
         }
     }
 
+    public @Nullable TextDisplay getLabelEntity() {
+        return labelEntity;
+    }
+
+    public void setLabelEntity(@Nullable TextDisplay labelEntity) {
+        this.labelEntity = labelEntity;
+        if (labelEntity != null) {
+            labelEntity.teleport(getLabelLocation());
+        }
+    }
+
+    public @Nullable TextDisplay getLabelBoldEntity() {
+        return labelBoldEntity;
+    }
+
+    public void setLabelBoldEntity(@Nullable TextDisplay labelBoldEntity) {
+        this.labelBoldEntity = labelBoldEntity;
+        if (labelBoldEntity != null) {
+            labelBoldEntity.teleport(getLabelLocation());
+        }
+    }
+
+    private Location getLabelLocation() {
+        Location labelLocation = location.clone().add(0.0D, LABEL_Y_OFFSET, 0.0D);
+        labelLocation.setYaw(teamType == TeamType.BLUE ? 90.0F : -90.0F);
+        labelLocation.setPitch(0.0F);
+        return labelLocation;
+    }
+
     private Location normalizeLocation(Location location) {
         Location normalized = location.clone();
         normalized.setYaw(0.0F);
         normalized.setPitch(0.0F);
         return normalized;
+    }
+
+    private String normalizeLabelText(TeamType teamType, @Nullable String labelText) {
+        if (labelText != null) {
+            String trimmed = labelText.trim();
+            if (!trimmed.isEmpty()) {
+                return trimmed;
+            }
+        }
+        return teamType == TeamType.BLUE ? "車" : "兵";
     }
 
     public @Nullable UUID getEntityId() {

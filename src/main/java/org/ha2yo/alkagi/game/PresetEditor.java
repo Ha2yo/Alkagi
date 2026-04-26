@@ -21,9 +21,10 @@ public final class PresetEditor {
 
     private UUID editorId;
     private String presetName;
-    private TeamType selectedTeam = TeamType.BLACK;
+    private TeamType selectedTeam = TeamType.BLUE;
     private double pieceSize;
     private double previousPieceSize;
+    private String labelText = getDefaultLabelText(TeamType.BLUE);
 
     public PresetEditor(ArenaData arenaData, BoardManager boardManager, PresetRepository presetRepository) {
         this.arenaData = arenaData;
@@ -67,7 +68,8 @@ public final class PresetEditor {
         clearPreviewPieces();
         this.editorId = player.getUniqueId();
         this.presetName = presetName;
-        this.selectedTeam = TeamType.BLACK;
+        this.selectedTeam = TeamType.BLUE;
+        this.labelText = getDefaultLabelText(selectedTeam);
         this.previousPieceSize = arenaData.getPieceSize();
 
         PresetData presetData = presetRepository.loadPreset(presetName);
@@ -75,10 +77,13 @@ public final class PresetEditor {
 
         if (presetData != null) {
             loadPresetPreview(presetData);
-            PresetData.PresetPiece firstPiece = presetData.getPieces(TeamType.BLACK).stream().findFirst()
-                .orElseGet(() -> presetData.getPieces(TeamType.WHITE).stream().findFirst().orElse(null));
+            PresetData.PresetPiece firstPiece = presetData.getPieces(TeamType.BLUE).stream().findFirst()
+                .orElseGet(() -> presetData.getPieces(TeamType.RED).stream().findFirst().orElse(null));
             if (firstPiece != null) {
                 this.pieceSize = firstPiece.pieceSize();
+                if (firstPiece.labelText() != null) {
+                    this.labelText = firstPiece.labelText();
+                }
             }
         }
         return true;
@@ -86,10 +91,20 @@ public final class PresetEditor {
 
     public void setSelectedTeam(TeamType selectedTeam) {
         this.selectedTeam = selectedTeam;
+        this.labelText = getDefaultLabelText(selectedTeam);
     }
 
     public void setPieceSize(double pieceSize) {
         this.pieceSize = Math.max(0.5D, pieceSize);
+    }
+
+    public String getLabelText() {
+        return labelText;
+    }
+
+    public void setLabelText(String labelText) {
+        String trimmed = labelText.trim();
+        this.labelText = trimmed.isEmpty() ? getDefaultLabelText(selectedTeam) : trimmed;
     }
 
     public boolean placePiece(Player player, Location clickedLocation) {
@@ -111,7 +126,7 @@ public final class PresetEditor {
 
         TeamData teamData = teamDataMap.get(selectedTeam);
         int pieceId = teamData.getPieces().size() + 1;
-        teamData.getPieces().add(boardManager.spawnPiece(selectedTeam, pieceId, spawnLocation, pieceSize));
+        teamData.getPieces().add(boardManager.spawnPiece(selectedTeam, pieceId, spawnLocation, pieceSize, labelText));
         return true;
     }
 
@@ -131,6 +146,31 @@ public final class PresetEditor {
         return true;
     }
 
+    public boolean relabelLastPlacedPiece(String labelText) {
+        if (!isEditing()) {
+            return false;
+        }
+
+        List<PieceData> pieces = teamDataMap.get(selectedTeam).getPieces();
+        if (pieces.isEmpty()) {
+            return false;
+        }
+
+        PieceData pieceData = pieces.get(pieces.size() - 1);
+        boardManager.updatePieceLabel(pieceData, labelText);
+        this.labelText = pieceData.getLabelText();
+        return true;
+    }
+
+    public boolean relabelPiece(PieceData pieceData) {
+        if (!isEditing() || !ownsPiece(pieceData)) {
+            return false;
+        }
+
+        boardManager.updatePieceLabel(pieceData, labelText);
+        return true;
+    }
+
     public void clearCurrentPieces() {
         clearPreviewPieces();
     }
@@ -143,7 +183,7 @@ public final class PresetEditor {
         PresetData presetData = new PresetData(presetName);
         for (TeamType teamType : TeamType.values()) {
             for (PieceData pieceData : teamDataMap.get(teamType).getAlivePieces()) {
-                presetData.addPiece(teamType, pieceData.getLocation(), pieceData.getPieceSize());
+                presetData.addPiece(teamType, pieceData.getLocation(), pieceData.getPieceSize(), pieceData.getLabelText());
             }
         }
 
@@ -161,7 +201,8 @@ public final class PresetEditor {
         arenaData.setPieceSize(previousPieceSize);
         editorId = null;
         presetName = null;
-        selectedTeam = TeamType.BLACK;
+        selectedTeam = TeamType.BLUE;
+        labelText = getDefaultLabelText(selectedTeam);
     }
 
     private void loadPresetPreview(PresetData presetData) {
@@ -169,9 +210,24 @@ public final class PresetEditor {
             TeamData teamData = teamDataMap.get(teamType);
             int pieceId = 1;
             for (PresetData.PresetPiece piece : presetData.getPieces(teamType)) {
-                teamData.getPieces().add(boardManager.spawnPiece(teamType, pieceId++, piece.location(), piece.pieceSize()));
+                teamData.getPieces().add(boardManager.spawnPiece(
+                    teamType,
+                    pieceId++,
+                    piece.location(),
+                    piece.pieceSize(),
+                    piece.labelText()
+                ));
             }
         }
+    }
+
+    private String getDefaultLabelText(TeamType teamType) {
+        return teamType == TeamType.BLUE ? "車" : "兵";
+    }
+
+    private boolean ownsPiece(PieceData pieceData) {
+        TeamData teamData = teamDataMap.get(pieceData.getTeamType());
+        return teamData != null && teamData.getPieces().contains(pieceData);
     }
 
     private void clearPreviewPieces() {
