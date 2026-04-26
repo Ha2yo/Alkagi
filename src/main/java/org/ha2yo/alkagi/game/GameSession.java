@@ -73,6 +73,7 @@ public final class GameSession {
     private final Map<TeamType, UUID> placementPlayers = new EnumMap<>(TeamType.class);
     private final Map<TeamType, Integer> placedCountMap = new EnumMap<>(TeamType.class);
     private final Map<UUID, Integer> eliminatedPiecesByPlayer = new java.util.HashMap<>();
+    private final Map<UUID, Integer> ownPiecesEliminatedByPlayer = new java.util.HashMap<>();
     private final Map<UUID, Integer> benchGameStreaks = new java.util.HashMap<>();
 
     private final Map<UUID, ItemStack[]> inventoryBackupMap = new java.util.HashMap<>();
@@ -252,6 +253,7 @@ public final class GameSession {
         placedCountMap.put(TeamType.BLACK, 0);
         placedCountMap.put(TeamType.WHITE, 0);
         eliminatedPiecesByPlayer.clear();
+        ownPiecesEliminatedByPlayer.clear();
 
         boardManager.clearSessionPieces(teamDataMap);
         teamDataMap.values().forEach(teamData -> {
@@ -812,13 +814,19 @@ public final class GameSession {
 
         UUID actingPlayerId = player.getUniqueId();
         TeamType targetTeam = teamType.opposite();
+        int ownAliveBefore = teamDataMap.get(teamType).getAlivePieceCount();
         int opponentAliveBefore = teamDataMap.get(targetTeam).getAlivePieceCount();
         stopTurnTimer();
         boardManager.launchPiece(selectedPiece, targetLocation, teamDataMap, () -> {
+            int ownAliveAfter = teamDataMap.get(teamType).getAlivePieceCount();
             int opponentAliveAfter = teamDataMap.get(targetTeam).getAlivePieceCount();
+            int ownEliminatedCount = Math.max(0, ownAliveBefore - ownAliveAfter);
             int eliminatedCount = Math.max(0, opponentAliveBefore - opponentAliveAfter);
             if (eliminatedCount > 0) {
                 eliminatedPiecesByPlayer.merge(actingPlayerId, eliminatedCount, Integer::sum);
+            }
+            if (ownEliminatedCount > 0) {
+                ownPiecesEliminatedByPlayer.merge(actingPlayerId, ownEliminatedCount, Integer::sum);
             }
             endTurn();
         });
@@ -1154,14 +1162,15 @@ public final class GameSession {
     }
 
     private @Nullable UUID getTopKillerId() {
-        return getKillRankingEntries().stream()
+        return getEliminationRankingEntries().stream()
+            .filter(stats -> stats.killCount() > 0)
             .findFirst()
-            .map(Map.Entry::getKey)
+            .map(PlayerEliminationStats::playerId)
             .orElse(null);
     }
 
     private void broadcastKillRanking() {
-        List<Map.Entry<UUID, Integer>> rankingEntries = getKillRankingEntries();
+        List<PlayerEliminationStats> rankingEntries = getEliminationRankingEntries();
         if (rankingEntries.isEmpty()) {
             return;
         }
@@ -1173,13 +1182,16 @@ public final class GameSession {
         int displayedCount = Math.min(10, rankingEntries.size());
         int previousRank = 0;
         int previousKillCount = Integer.MIN_VALUE;
+        int previousDeathCount = Integer.MIN_VALUE;
         for (int index = 0; index < displayedCount; index++) {
-            Map.Entry<UUID, Integer> entry = rankingEntries.get(index);
-            int killCount = entry.getValue();
-            int rank = killCount == previousKillCount ? previousRank : index + 1;
-            rankingLines.add(createKillRankingLine(rank, entry.getKey(), killCount));
+            PlayerEliminationStats entry = rankingEntries.get(index);
+            int killCount = entry.killCount();
+            int deathCount = entry.deathCount();
+            int rank = killCount == previousKillCount && deathCount == previousDeathCount ? previousRank : index + 1;
+            rankingLines.add(createKillRankingLine(rank, entry.playerId(), killCount, entry.deathCount()));
             previousRank = rank;
             previousKillCount = killCount;
+            previousDeathCount = deathCount;
         }
 
         rankingLines.add(Component.text("========================================", NamedTextColor.DARK_GRAY));
@@ -1191,20 +1203,39 @@ public final class GameSession {
         }
     }
 
-    private List<Map.Entry<UUID, Integer>> getKillRankingEntries() {
-        List<Map.Entry<UUID, Integer>> entries = new ArrayList<>(eliminatedPiecesByPlayer.entrySet());
-        entries.removeIf(entry -> entry.getValue() <= 0);
+    private List<PlayerEliminationStats> getEliminationRankingEntries() {
+        Set<UUID> playerIds = new LinkedHashSet<>();
+        playerIds.addAll(eliminatedPiecesByPlayer.keySet());
+        playerIds.addAll(ownPiecesEliminatedByPlayer.keySet());
+
+        List<PlayerEliminationStats> entries = new ArrayList<>();
+        for (UUID playerId : playerIds) {
+            entries.add(new PlayerEliminationStats(playerId, getKillCount(playerId), getDeathCount(playerId)));
+        }
+        entries.removeIf(entry -> entry.totalCount() <= 0);
         entries.sort((left, right) -> {
-            int killCompare = Integer.compare(right.getValue(), left.getValue());
+            int killCompare = Integer.compare(right.killCount(), left.killCount());
             if (killCompare != 0) {
                 return killCompare;
             }
-            return resolvePlayerName(left.getKey()).compareToIgnoreCase(resolvePlayerName(right.getKey()));
+            int deathCompare = Integer.compare(left.deathCount(), right.deathCount());
+            if (deathCompare != 0) {
+                return deathCompare;
+            }
+            return resolvePlayerName(left.playerId()).compareToIgnoreCase(resolvePlayerName(right.playerId()));
         });
         return entries;
     }
 
-    private Component createKillRankingLine(int rank, UUID playerId, int killCount) {
+    private int getKillCount(UUID playerId) {
+        return eliminatedPiecesByPlayer.getOrDefault(playerId, 0);
+    }
+
+    private int getDeathCount(UUID playerId) {
+        return ownPiecesEliminatedByPlayer.getOrDefault(playerId, 0);
+    }
+
+    private Component createKillRankingLine(int rank, UUID playerId, int killCount, int deathCount) {
         TeamType teamType = playerTeamMap.get(playerId);
         NamedTextColor nameColor = teamType == null ? NamedTextColor.WHITE : teamType.getColor();
         String playerName = resolvePlayerName(playerId);
@@ -1212,8 +1243,10 @@ public final class GameSession {
         return Component.text()
             .append(Component.text(rankLabel + " ", getRankColor(rank)))
             .append(Component.text(playerName, nameColor))
-            .append(Component.text(createDotLeader(rankLabel, playerName, killCount), NamedTextColor.DARK_GRAY))
-            .append(Component.text(killCount + " KILL", NamedTextColor.YELLOW))
+            .append(Component.text(createDotLeader(rankLabel, playerName, killCount, deathCount), NamedTextColor.DARK_GRAY))
+            .append(Component.text(killCount + " 킬", NamedTextColor.YELLOW))
+            .append(Component.text(" / ", NamedTextColor.DARK_GRAY))
+            .append(Component.text(deathCount + " 팀킬", NamedTextColor.RED))
             .build();
     }
 
@@ -1237,11 +1270,14 @@ public final class GameSession {
         };
     }
 
-    private String createDotLeader(String rankLabel, String playerName, int killCount) {
-        int targetWidth = 30;
-        int contentWidth = rankLabel.length() + 1 + playerName.length() + String.valueOf(killCount).length();
-        int dotCount = Math.max(6, targetWidth - contentWidth);
-        return " " + ".".repeat(dotCount) + " ";
+    private String createDotLeader(String rankLabel, String playerName, int killCount, int deathCount) {
+        return " ..... ";
+    }
+
+    private record PlayerEliminationStats(UUID playerId, int killCount, int deathCount) {
+        public int totalCount() {
+            return killCount + deathCount;
+        }
     }
 
     private void playResultSound(@Nullable TeamType winner) {
