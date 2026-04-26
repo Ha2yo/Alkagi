@@ -401,7 +401,7 @@ public final class RemoteGameListener implements Listener {
 
     private void sendSelectionReadyFeedback(Player player) {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
-        player.sendMessage(Component.text("이제 마우스를 움직여 방향과 세기를 정해 주세요.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("마우스를 움직여 방향과 세기를 정한 다음 우클릭으로 발사하세요.", NamedTextColor.YELLOW));
     }
 
     private void sendSelectionCancelledFeedback(Player player) {

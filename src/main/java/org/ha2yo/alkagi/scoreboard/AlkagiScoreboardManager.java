@@ -105,14 +105,18 @@ public final class AlkagiScoreboardManager {
 
     private Component buildTeamLine(GameSession session, Player player) {
         TeamType teamType = session.getPlayerTeam(player.getUniqueId());
-        NamedTextColor teamColor = switch (teamType) {
-            case BLUE -> TeamType.BLUE.getColor();
-            case RED -> TeamType.RED.getColor();
-            case null -> NamedTextColor.DARK_GRAY;
-        };
+        if (teamType == null) {
+            return Component.text()
+                .append(Component.text("당신은 ", NamedTextColor.WHITE))
+                .append(Component.text("관전 중", NamedTextColor.GRAY))
+                .append(Component.text("입니다", NamedTextColor.WHITE))
+                .build();
+        }
+
         return Component.text()
             .append(Component.text("당신은 ", NamedTextColor.WHITE))
-            .append(Component.text(session.getPlayerTeamStatusText(player.getUniqueId()), teamColor))
+            .append(Component.text(teamType.getDisplayName() + "팀", teamType.getColor()))
+            .append(Component.text("입니다", NamedTextColor.WHITE))
             .build();
     }
 

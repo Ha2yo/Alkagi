@@ -423,7 +423,7 @@ public final class GameSession {
             giveRemoteController(player);
             showCurrentTurnTitle(player);
             player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 1.0F, 1.35F);
-            player.sendMessage(Component.text("지금 당신 차례입니다. 블레이즈 막대로 말을 우클릭해 주세요.", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text("당신 차례입니다. 블레이즈 막대로 말을 우클릭해 주세요. (한번만 클릭)", NamedTextColor.YELLOW));
         }
         startTurnTimer();
     }
@@ -600,7 +600,7 @@ public final class GameSession {
             return "대기 중입니다";
         }
         if (currentTurnPlayer != null && currentTurnPlayer.equals(playerId)) {
-            return "지금 당신 차례입니다";
+            return "당신 차례입니다";
         }
 
         TeamType teamType = playerTeamMap.get(playerId);

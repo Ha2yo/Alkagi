@@ -51,7 +51,7 @@ public final class BoardManager {
 
     private static final double DISPLAY_FOOTPRINT_SCALE = 0.57D;
     private static final double LABEL_FOOTPRINT_SCALE = 4.0D;
-    private static final float LABEL_BOLD_OFFSET = 0.01F;
+    private static final float LABEL_BOLD_OFFSET = 0.018F;
     private static final float LABEL_DEPTH_OFFSET = 0.65F;
     private static final double FRICTION = 0.86D;
     private static final double ROLLING_RESISTANCE = 0.035D;
@@ -253,13 +253,9 @@ public final class BoardManager {
             if (display != null) {
                 configurePieceDisplay(display, piece);
             }
-            TextDisplay labelBold = piece.getLabelBoldEntity();
-            if (labelBold != null) {
-                configurePieceLabel(labelBold, piece, -LABEL_BOLD_OFFSET);
-            }
-            TextDisplay label = piece.getLabelEntity();
-            if (label != null) {
-                configurePieceLabel(label, piece, LABEL_BOLD_OFFSET);
+            List<TextDisplay> labels = piece.getLabelEntities();
+            for (int i = 0; i < labels.size(); i++) {
+                configurePieceLabel(labels.get(i), piece, getLabelOffset(i));
             }
         }
     }
@@ -277,29 +273,16 @@ public final class BoardManager {
             return;
         }
 
-        TextDisplay labelBold = (TextDisplay) world.spawnEntity(location, EntityType.TEXT_DISPLAY);
-        configurePieceLabel(labelBold, pieceData, -LABEL_BOLD_OFFSET);
-        markPieceEntity(labelBold);
-        pieceData.setLabelBoldEntity(labelBold);
-
-        TextDisplay label = (TextDisplay) world.spawnEntity(location, EntityType.TEXT_DISPLAY);
-        configurePieceLabel(label, pieceData, LABEL_BOLD_OFFSET);
-        markPieceEntity(label);
-        pieceData.setLabelEntity(label);
+        for (Vector3f labelOffset : getLabelOffsets()) {
+            TextDisplay label = (TextDisplay) world.spawnEntity(location, EntityType.TEXT_DISPLAY);
+            configurePieceLabel(label, pieceData, labelOffset);
+            markPieceEntity(label);
+            pieceData.addLabelEntity(label);
+        }
     }
 
     private void removePieceLabels(PieceData pieceData) {
-        TextDisplay label = pieceData.getLabelEntity();
-        if (label != null) {
-            label.remove();
-            pieceData.setLabelEntity(null);
-        }
-
-        TextDisplay labelBold = pieceData.getLabelBoldEntity();
-        if (labelBold != null) {
-            labelBold.remove();
-            pieceData.setLabelBoldEntity(null);
-        }
+        pieceData.clearLabelEntities();
     }
 
     /**
@@ -391,11 +374,26 @@ public final class BoardManager {
         ));
     }
 
-    private void configurePieceLabel(TextDisplay label, PieceData pieceData, float boldOffset) {
+    private List<Vector3f> getLabelOffsets() {
+        return List.of(
+                new Vector3f(0.0F, 0.0F, 0.0F),
+                new Vector3f(-LABEL_BOLD_OFFSET, 0.0F, 0.0F),
+                new Vector3f(LABEL_BOLD_OFFSET, 0.0F, 0.0F),
+                new Vector3f(0.0F, 0.0F, -LABEL_BOLD_OFFSET),
+                new Vector3f(0.0F, 0.0F, LABEL_BOLD_OFFSET)
+        );
+    }
+
+    private Vector3f getLabelOffset(int index) {
+        List<Vector3f> offsets = getLabelOffsets();
+        return offsets.get(Math.min(index, offsets.size() - 1));
+    }
+
+    private void configurePieceLabel(TextDisplay label, PieceData pieceData, Vector3f labelOffset) {
         float pieceSize = (float) pieceData.getPieceSize();
         float sizeRatio = pieceSize / (float) DEFAULT_PIECE_SIZE;
         float labelScale = (float) (pieceSize * DISPLAY_FOOTPRINT_SCALE * LABEL_FOOTPRINT_SCALE);
-        float scaledBoldOffset = boldOffset * sizeRatio;
+        Vector3f scaledLabelOffset = new Vector3f(labelOffset).mul(sizeRatio);
         float scaledDepthOffset = LABEL_DEPTH_OFFSET * sizeRatio;
         label.text(Component.text(
                 getPieceLabelText(pieceData),
@@ -413,7 +411,7 @@ public final class BoardManager {
         label.setViewRange(256.0F);
         label.setRotation(0.0F, -90.0F);
         label.setTransformation(new Transformation(
-                new Vector3f(scaledBoldOffset, 0.25F, scaledDepthOffset),
+                new Vector3f(scaledLabelOffset.x, 0.26F, scaledDepthOffset + scaledLabelOffset.z),
                 new AxisAngle4f((float) Math.toRadians(-90.0D), 1.0F, 0.0F, 0.0F),
                 new Vector3f(labelScale, labelScale, labelScale),
                 new AxisAngle4f()

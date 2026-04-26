@@ -8,6 +8,9 @@ import org.bukkit.entity.TextDisplay;
 import org.ha2yo.alkagi.game.TeamType;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -29,8 +32,7 @@ public final class PieceData {
     private ArmorStand entity;
     private Interaction interactionEntity;
     private ItemDisplay displayEntity;
-    private TextDisplay labelEntity;
-    private TextDisplay labelBoldEntity;
+    private final List<TextDisplay> labelEntities = new ArrayList<>();
 
     public PieceData(int pieceId, TeamType teamType, Location location, double pieceSize) {
         this(pieceId, teamType, location, pieceSize, null);
@@ -83,11 +85,8 @@ public final class PieceData {
         if (displayEntity != null) {
             displayEntity.teleport(this.location.clone().subtract(0.0D, DISPLAY_Y_OFFSET, 0.0D));
         }
-        if (labelEntity != null) {
+        for (TextDisplay labelEntity : labelEntities) {
             labelEntity.teleport(getLabelLocation());
-        }
-        if (labelBoldEntity != null) {
-            labelBoldEntity.teleport(getLabelLocation());
         }
     }
 
@@ -112,13 +111,11 @@ public final class PieceData {
             displayEntity.remove();
             displayEntity = null;
         }
-        if (!alive && labelEntity != null) {
-            labelEntity.remove();
-            labelEntity = null;
-        }
-        if (!alive && labelBoldEntity != null) {
-            labelBoldEntity.remove();
-            labelBoldEntity = null;
+        if (!alive) {
+            for (TextDisplay labelEntity : labelEntities) {
+                labelEntity.remove();
+            }
+            labelEntities.clear();
         }
     }
 
@@ -155,26 +152,20 @@ public final class PieceData {
         }
     }
 
-    public @Nullable TextDisplay getLabelEntity() {
-        return labelEntity;
+    public List<TextDisplay> getLabelEntities() {
+        return Collections.unmodifiableList(labelEntities);
     }
 
-    public void setLabelEntity(@Nullable TextDisplay labelEntity) {
-        this.labelEntity = labelEntity;
-        if (labelEntity != null) {
-            labelEntity.teleport(getLabelLocation());
+    public void addLabelEntity(TextDisplay labelEntity) {
+        labelEntities.add(labelEntity);
+        labelEntity.teleport(getLabelLocation());
+    }
+
+    public void clearLabelEntities() {
+        for (TextDisplay labelEntity : labelEntities) {
+            labelEntity.remove();
         }
-    }
-
-    public @Nullable TextDisplay getLabelBoldEntity() {
-        return labelBoldEntity;
-    }
-
-    public void setLabelBoldEntity(@Nullable TextDisplay labelBoldEntity) {
-        this.labelBoldEntity = labelBoldEntity;
-        if (labelBoldEntity != null) {
-            labelBoldEntity.teleport(getLabelLocation());
-        }
+        labelEntities.clear();
     }
 
     private Location getLabelLocation() {
