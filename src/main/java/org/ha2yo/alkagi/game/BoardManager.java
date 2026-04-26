@@ -886,7 +886,7 @@ public final class BoardManager {
         return Math.max(0.14D, (pieceSize * DISPLAY_FOOTPRINT_SCALE) / 2.0D);
     }
 
-    private double getSelectionDiameter(PieceData pieceData) {
+    public double getSelectionDiameter(PieceData pieceData) {
         return getSelectionDiameter(pieceData.getPieceSize());
     }
 

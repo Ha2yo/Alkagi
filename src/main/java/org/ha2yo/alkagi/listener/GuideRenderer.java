@@ -20,6 +20,7 @@ import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
 import org.ha2yo.alkagi.game.TeamType;
 import org.ha2yo.alkagi.game.model.PieceData;
+import org.ha2yo.alkagi.game.model.TeamData;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,6 +47,8 @@ public final class GuideRenderer {
     private static final double ARM_HORIZONTAL_PITCH = Math.toRadians(270.0D);
     private static final double ARM_HEAD_YAW = Math.toRadians(24.0D);
     private static final double RING_POINT_SPACING = 0.2D;
+    private static final double TURN_PIECE_RING_Y_OFFSET = 0.12D;
+    private static final double TURN_PIECE_RING_RADIUS_SCALE = 1.35D;
     private static final Particle.DustOptions BLUE_DUST = new Particle.DustOptions(Color.fromRGB(40, 95, 255), 1.45F);
     private static final Particle.DustOptions RED_DUST = new Particle.DustOptions(Color.fromRGB(230, 45, 45), 1.45F);
     private static final Particle.DustOptions GREEN_DUST = new Particle.DustOptions(Color.fromRGB(110, 255, 110), 1.5F);
@@ -118,6 +121,8 @@ public final class GuideRenderer {
             return;
         }
 
+        drawCurrentTurnTeamPieces(player, session);
+
         PieceData selectedPiece = session.getSelectedPiece();
         if (selectedPiece == null) {
             clearAimMarker(player.getUniqueId());
@@ -140,6 +145,32 @@ public final class GuideRenderer {
         }
 
         drawAimGuide(player, selectedPiece, target);
+    }
+
+    private void drawCurrentTurnTeamPieces(Player viewer, GameSession session) {
+        TeamType teamType = session.getTeam(viewer.getUniqueId());
+        if (teamType == null || teamType != session.getCurrentTurnTeam()) {
+            return;
+        }
+
+        TeamData teamData = session.getTeamDataMap().get(teamType);
+        if (teamData == null) {
+            return;
+        }
+
+        Particle.DustOptions dust = teamType == TeamType.BLUE ? BLUE_DUST : RED_DUST;
+        for (PieceData pieceData : teamData.getAlivePieces()) {
+            double radius = (gameManager.getBoardManager().getSelectionDiameter(pieceData) / 2.0D)
+                    * TURN_PIECE_RING_RADIUS_SCALE;
+            int points = Math.max(18, (int) Math.ceil((Math.PI * 2.0D * radius) / RING_POINT_SPACING));
+            drawRing(
+                    viewer,
+                    pieceData.getLocation().clone().add(0.0D, TURN_PIECE_RING_Y_OFFSET, 0.0D),
+                    radius,
+                    dust,
+                    points
+            );
+        }
     }
 
     /**
@@ -264,9 +295,7 @@ public final class GuideRenderer {
                 sideDirection
         );
 
-        for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
-            marker.showTo(onlinePlayer, plugin);
-        }
+        marker.showTo(owner, plugin);
     }
 
     private static void configureArrowStand(ArmorStand stand) {
@@ -303,8 +332,7 @@ public final class GuideRenderer {
             return;
         }
 
-        viewer.spawnParticle(Particle.DUST, location, 1, 0.01D, 0.0D, 0.01D, 0.0D, dust);
-        world.spawnParticle(Particle.DUST, location, 0, 0.0D, 0.0D, 0.0D, 0.0D, dust, true);
+        viewer.spawnParticle(Particle.DUST, location, 1, 0.01D, 0.0D, 0.01D, 0.0D, dust, true);
     }
 
     /**
