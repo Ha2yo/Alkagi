@@ -60,6 +60,8 @@ public final class GameSession {
     private static final long GAME_MUSIC_LOOP_SECONDS = 120L;
     private static final NamedTextColor DEFAULT_PLAYER_COLOR = NamedTextColor.GRAY;
     private static final float TURN_CAMERA_FLY_SPEED = 0.6F;
+    private static final long NEXT_TURN_DELAY_TICKS = 20L;
+    private static final long GAME_END_DELAY_TICKS = 20L;
 
     private static final PotionEffect TURN_SPEED_EFFECT =
         new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 9, false, false, false);
@@ -405,7 +407,7 @@ public final class GameSession {
         TeamData teamData = teamDataMap.get(currentTurnTeam);
         UUID next = findNextOnlinePlayer(teamData);
         if (next == null) {
-            endGame(currentTurnTeam.opposite());
+            scheduleEndGame(currentTurnTeam.opposite());
             return;
         }
 
@@ -433,25 +435,25 @@ public final class GameSession {
         }
 
         stopTurnTimer();
-        restoreTurnCamera(currentTurnPlayer);
+        UUID finishedTurnPlayer = currentTurnPlayer;
         TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
         currentTeamData.pushBackPlayer(currentTurnPlayer);
         currentTurnPlayer = null;
         selectedPiece = null;
 
         if (isDraw()) {
-            endGame(null);
+            scheduleEndGame(null);
             return;
         }
 
         TeamType winner = checkWinner();
         if (winner != null) {
-            endGame(winner);
+            scheduleEndGame(winner);
             return;
         }
 
         currentTurnTeam = currentTurnTeam.opposite();
-        startNextTurn();
+        scheduleNextTurn(finishedTurnPlayer);
     }
 
     /**
@@ -1612,6 +1614,17 @@ public final class GameSession {
 
     private void removeTurnBuff(Player player) {
         player.removePotionEffect(PotionEffectType.SPEED);
+    }
+
+    private void scheduleNextTurn(UUID finishedTurnPlayer) {
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            restoreTurnCamera(finishedTurnPlayer);
+            startNextTurn();
+        }, NEXT_TURN_DELAY_TICKS);
+    }
+
+    private void scheduleEndGame(@Nullable TeamType winner) {
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> endGame(winner), GAME_END_DELAY_TICKS);
     }
 
     private void backupFlightState(Player player) {
