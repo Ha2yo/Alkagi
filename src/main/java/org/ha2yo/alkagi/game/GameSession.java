@@ -518,6 +518,64 @@ public final class GameSession {
         }
     }
 
+    public boolean kickParticipant(Player player) {
+        UUID playerId = player.getUniqueId();
+        TeamType teamType = playerTeamMap.get(playerId);
+        if (!participants.contains(playerId) || teamType == null || gameState == GameState.WAITING || gameState == GameState.ENDING) {
+            return false;
+        }
+
+        boolean wasCurrentTurnPlayer = currentTurnPlayer != null && currentTurnPlayer.equals(playerId);
+        boolean wasPlacementPlayer = placementPlayers.values().stream().anyMatch(playerId::equals);
+        if (wasCurrentTurnPlayer) {
+            stopTurnTimer();
+            currentTurnPlayer = null;
+            selectedPiece = null;
+            lastSelectedPlayerId = null;
+            lastSelectedAtMillis = 0L;
+        }
+
+        participants.remove(playerId);
+        playerTeamMap.remove(playerId);
+        teamDataMap.values().forEach(teamData -> teamData.removePlayer(playerId));
+        placementPlayers.values().removeIf(playerId::equals);
+        eliminatedPiecesByPlayer.remove(playerId);
+        ownPiecesEliminatedByPlayer.remove(playerId);
+
+        player.stopSound(getGameMusicSoundKey(), SoundCategory.MASTER);
+        clearRemoteControlMode(player);
+        applySpectatorState(player);
+        Location spectatorLocation = arenaData.getSpectatorLocation();
+        if (spectatorLocation != null) {
+            player.teleport(spectatorLocation);
+        } else {
+            sendToLobby(player);
+        }
+        refreshPlayerFormatting(player);
+
+        if (gameState == GameState.PLACING) {
+            if (teamDataMap.get(teamType).getPlayers().isEmpty()) {
+                endGame(teamType.opposite());
+            } else if (wasPlacementPlayer) {
+                assignReplacementPlacementPlayer(teamType);
+            }
+            return true;
+        }
+
+        if (gameState == GameState.PLAYING && teamDataMap.get(teamType).getPlayers().isEmpty()) {
+            endGame(teamType.opposite());
+            return true;
+        }
+
+        if (wasCurrentTurnPlayer) {
+            startNextTurn();
+        } else {
+            scoreboardManager.updateGameBoard(this);
+            refreshTurnIndicators();
+        }
+        return true;
+    }
+
     public Set<UUID> getParticipants() {
         return Set.copyOf(participants);
     }

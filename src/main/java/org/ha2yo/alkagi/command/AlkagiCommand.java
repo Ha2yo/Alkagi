@@ -29,7 +29,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         "status", "start", "forcestart", "stop", "reset",
         "setboardpos1", "setboardpos2", "setlobby", "setspectator",
         "setblueplace", "setredplace", "setturntime", "setpiecesize", "setcontrolradius",
-        "preset"
+        "kick", "preset"
     );
     private static final List<String> PRESET_SUBCOMMANDS = List.of(
         "list", "edit", "team", "label", "relabel", "save", "clear", "cancel", "delete"
@@ -67,6 +67,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "setturntime" -> handleSetTurnTime(sender, args);
             case "setpiecesize" -> handleSetPieceSize(sender, args);
             case "setcontrolradius" -> handleSetControlRadius(sender);
+            case "kick" -> handleKick(sender, args);
             case "preset" -> handlePreset(sender, args);
             default -> {
                 sender.sendMessage(Component.text("알 수 없는 하위 명령입니다.", NamedTextColor.RED));
@@ -362,6 +363,37 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             "조작 반경은 이제 말 크기에 따라 자동 계산됩니다. /alkagi setpiecesize <size> 를 사용해 주세요.",
             NamedTextColor.YELLOW
         ));
+        return true;
+    }
+
+    private boolean handleKick(CommandSender sender, String[] args) {
+        if (!requireAdmin(sender)) {
+            return true;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(Component.text("/alkagi kick <닉네임>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        Player target = gameManager.getPlugin().getServer().getPlayerExact(args[1]);
+        if (target == null) {
+            sender.sendMessage(Component.text("해당 플레이어를 찾을 수 없습니다: " + args[1], NamedTextColor.RED));
+            return true;
+        }
+
+        TeamType teamType = gameManager.getSession().getPlayerTeam(target.getUniqueId());
+        if (!gameManager.getSession().kickParticipant(target)) {
+            sender.sendMessage(Component.text("현재 게임 참가자가 아닙니다: " + target.getName(), NamedTextColor.RED));
+            return true;
+        }
+
+        Component message = Component.text(target.getName() + " 님을 게임에서 추방했습니다.", NamedTextColor.YELLOW);
+        if (teamType != null) {
+            message = Component.text(target.getName() + " 님을 ", NamedTextColor.YELLOW)
+                .append(Component.text(teamType.getDisplayName(), teamType.getColor()))
+                .append(Component.text(" 팀에서 추방했습니다.", NamedTextColor.YELLOW));
+        }
+        gameManager.getPlugin().getServer().broadcast(message);
         return true;
     }
 
@@ -685,6 +717,15 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 2 && "setpiecesize".equalsIgnoreCase(args[0])) {
             return List.of("1.8", "2.0", "2.35", "2.6", "3.0");
+        }
+
+        if (args.length == 2 && "kick".equalsIgnoreCase(args[0])) {
+            return gameManager.getSession().getParticipants().stream()
+                .map(playerId -> gameManager.getPlugin().getServer().getPlayer(playerId))
+                .filter(java.util.Objects::nonNull)
+                .map(Player::getName)
+                .filter(option -> option.toLowerCase().startsWith(args[1].toLowerCase()))
+                .toList();
         }
 
         if (args.length == 2 && "preset".equalsIgnoreCase(args[0])) {
