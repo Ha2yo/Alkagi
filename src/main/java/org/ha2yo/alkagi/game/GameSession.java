@@ -59,9 +59,10 @@ public final class GameSession {
     private static final float GAME_MUSIC_VOLUME = 0.1225F;
     private static final long GAME_MUSIC_LOOP_SECONDS = 120L;
     private static final NamedTextColor DEFAULT_PLAYER_COLOR = NamedTextColor.GRAY;
+    private static final float TURN_CAMERA_FLY_SPEED = 0.6F;
 
     private static final PotionEffect TURN_SPEED_EFFECT =
-        new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 4, false, false, false);
+        new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 9, false, false, false);
     private static final PotionEffect SPECTATOR_INVISIBILITY_EFFECT =
         new PotionEffect(PotionEffectType.INVISIBILITY, PotionEffect.INFINITE_DURATION, 0, false, false, false);
 
@@ -81,6 +82,8 @@ public final class GameSession {
     private final Map<UUID, ItemStack[]> inventoryBackupMap = new java.util.HashMap<>();
     private final Map<UUID, ItemStack[]> armorBackupMap = new java.util.HashMap<>();
     private final Map<UUID, Integer> heldSlotBackupMap = new java.util.HashMap<>();
+    private final Map<UUID, FlightState> flightStateMap = new java.util.HashMap<>();
+    private final Map<UUID, TurnCameraState> turnCameraStateMap = new java.util.HashMap<>();
 
     private final BossBar turnTimerBar = Bukkit.createBossBar("", BarColor.YELLOW, BarStyle.SOLID);
 
@@ -92,7 +95,6 @@ public final class GameSession {
     private UUID lastSelectedPlayerId;
     private long lastSelectedAtMillis;
     private int remainingTurnSeconds;
-    private boolean openingTurnTeleportDone;
     private BukkitTask turnTimerTask;
     private BukkitTask gameMusicTask;
 
@@ -249,7 +251,7 @@ public final class GameSession {
         selectedPiece = null;
         lastSelectedPlayerId = null;
         lastSelectedAtMillis = 0L;
-        openingTurnTeleportDone = false;
+        restoreAllTurnCameras();
         playerTeamMap.clear();
         placementPlayers.clear();
         placedCountMap.put(TeamType.BLUE, 0);
@@ -412,13 +414,7 @@ public final class GameSession {
         refreshTurnIndicators();
         Player player = plugin.getServer().getPlayer(next);
         if (player != null) {
-            if (!openingTurnTeleportDone) {
-                Location spectatorLocation = arenaData.getSpectatorLocation();
-                if (spectatorLocation != null) {
-                    player.teleport(spectatorLocation);
-                }
-                openingTurnTeleportDone = true;
-            }
+            enterTurnCamera(player);
             applyTurnBuff(player);
             giveRemoteController(player);
             showCurrentTurnTitle(player);
@@ -437,6 +433,7 @@ public final class GameSession {
         }
 
         stopTurnTimer();
+        restoreTurnCamera(currentTurnPlayer);
         TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
         currentTeamData.pushBackPlayer(currentTurnPlayer);
         currentTurnPlayer = null;
@@ -485,6 +482,7 @@ public final class GameSession {
         stopTurnTimer();
         stopGameMusic();
         gameState = GameState.ENDING;
+        restoreAllTurnCameras();
         clearAllPlayerInventories();
         sendAllOnlinePlayersToLobby();
         scoreboardManager.showResult(this, winner);
@@ -499,6 +497,8 @@ public final class GameSession {
     public void removeOfflinePlayer(
             UUID playerId
     ) {
+        turnCameraStateMap.remove(playerId);
+        flightStateMap.remove(playerId);
         TeamType teamType = playerTeamMap.get(playerId);
         participants.remove(playerId);
         playerTeamMap.remove(playerId);
@@ -1358,6 +1358,12 @@ public final class GameSession {
         }
     }
 
+    private record TurnCameraState(Location location, boolean allowFlight, boolean flying, float flySpeed, double fixedY) {
+    }
+
+    private record FlightState(boolean allowFlight, boolean flying, float flySpeed) {
+    }
+
     private void playResultSound(@Nullable TeamType winner) {
         if (winner == null) {
             playSoundToParticipants(Sound.BLOCK_NOTE_BLOCK_BELL, 0.9F, 0.9F);
@@ -1475,13 +1481,16 @@ public final class GameSession {
     private void applyRemoteControlMode(Player player) {
         inventoryBackupMap.putIfAbsent(player.getUniqueId(), player.getInventory().getContents().clone());
         heldSlotBackupMap.putIfAbsent(player.getUniqueId(), player.getInventory().getHeldItemSlot());
+        backupFlightState(player);
         player.setGameMode(GameMode.ADVENTURE);
         player.setAllowFlight(true);
         player.setFlying(true);
+        player.setFlySpeed(TURN_CAMERA_FLY_SPEED);
         player.setInvulnerable(true);
         player.setCollidable(false);
         player.setSilent(true);
         player.getInventory().clear();
+        applyTurnBuff(player);
         enforceTeamArmor(player);
     }
 
@@ -1565,14 +1574,16 @@ public final class GameSession {
             inventoryBackupMap.remove(player.getUniqueId());
             heldSlotBackupMap.remove(player.getUniqueId());
             player.getInventory().clear();
+            removeTurnBuff(player);
+            restoreFlightState(player);
             restoreOriginalArmor(player);
         }
     }
 
     private void clearRemoteControlMode(Player player) {
+        restoreTurnCamera(player.getUniqueId());
         player.setGameMode(GameMode.ADVENTURE);
-        player.setAllowFlight(false);
-        player.setFlying(false);
+        restoreFlightState(player);
         player.setInvulnerable(false);
         player.setCollidable(true);
         player.setSilent(false);
@@ -1601,6 +1612,92 @@ public final class GameSession {
 
     private void removeTurnBuff(Player player) {
         player.removePotionEffect(PotionEffectType.SPEED);
+    }
+
+    private void backupFlightState(Player player) {
+        flightStateMap.putIfAbsent(player.getUniqueId(), new FlightState(
+                player.getAllowFlight(),
+                player.isFlying(),
+                player.getFlySpeed()
+        ));
+    }
+
+    private void restoreFlightState(Player player) {
+        FlightState state = flightStateMap.remove(player.getUniqueId());
+        if (state == null) {
+            player.setAllowFlight(false);
+            player.setFlying(false);
+            player.setFlySpeed(0.1F);
+            return;
+        }
+
+        player.setAllowFlight(state.allowFlight());
+        player.setFlying(state.flying());
+        player.setFlySpeed(state.flySpeed());
+    }
+
+    public @Nullable Location enforceTurnCameraY(Player player, Location targetLocation) {
+        TurnCameraState state = turnCameraStateMap.get(player.getUniqueId());
+        if (state == null) {
+            return null;
+        }
+        if (Math.abs(targetLocation.getY() - state.fixedY()) <= 0.0001D) {
+            return null;
+        }
+
+        Location fixedLocation = targetLocation.clone();
+        fixedLocation.setY(state.fixedY());
+        return fixedLocation;
+    }
+
+    private void enterTurnCamera(Player player) {
+        UUID playerId = player.getUniqueId();
+        Location cameraLocation = resolveTurnCameraLocation(player);
+        turnCameraStateMap.putIfAbsent(playerId, new TurnCameraState(
+                player.getLocation().clone(),
+                player.getAllowFlight(),
+                player.isFlying(),
+                player.getFlySpeed(),
+                cameraLocation.getY()
+        ));
+
+        player.teleport(cameraLocation);
+        player.setAllowFlight(true);
+        player.setFlying(true);
+        player.setFlySpeed(TURN_CAMERA_FLY_SPEED);
+    }
+
+    private Location resolveTurnCameraLocation(Player player) {
+        TeamType teamType = playerTeamMap.get(player.getUniqueId());
+        Location teamLocation = teamType == null ? null : arenaData.getPlacementLocation(teamType);
+        if (teamLocation != null) {
+            return teamLocation;
+        }
+        return player.getLocation().clone();
+    }
+
+    private void restoreTurnCamera(UUID playerId) {
+        TurnCameraState state = turnCameraStateMap.remove(playerId);
+        if (state == null) {
+            return;
+        }
+
+        Player player = plugin.getServer().getPlayer(playerId);
+        if (player == null) {
+            return;
+        }
+
+        player.teleport(state.location());
+        player.setAllowFlight(state.allowFlight());
+        player.setFlying(state.flying());
+        player.setFlySpeed(state.flySpeed());
+    }
+
+    private void restoreAllTurnCameras() {
+        for (UUID playerId : new ArrayList<>(turnCameraStateMap.keySet())) {
+            restoreTurnCamera(playerId);
+        }
+        turnCameraStateMap.clear();
     }
 
     /**
@@ -1719,14 +1816,17 @@ public final class GameSession {
             return;
         }
 
+        backupFlightState(player);
         player.setGameMode(GameMode.ADVENTURE);
         player.setAllowFlight(true);
         player.setFlying(true);
+        player.setFlySpeed(TURN_CAMERA_FLY_SPEED);
         player.setInvulnerable(true);
         player.setCollidable(false);
         player.getInventory().setArmorContents(new ItemStack[4]);
         player.updateInventory();
         player.addPotionEffect(SPECTATOR_INVISIBILITY_EFFECT);
+        applyTurnBuff(player);
     }
 
     /**
@@ -1738,8 +1838,8 @@ public final class GameSession {
             return;
         }
 
-        player.setAllowFlight(false);
-        player.setFlying(false);
+        removeTurnBuff(player);
+        restoreFlightState(player);
         player.setInvulnerable(false);
         player.setCollidable(true);
     }

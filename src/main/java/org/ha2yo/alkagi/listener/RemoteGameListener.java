@@ -21,6 +21,7 @@ import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.RayTraceResult;
@@ -69,6 +70,14 @@ public final class RemoteGameListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         gameManager.handleQuit(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void onMove(PlayerMoveEvent event) {
+        Location fixedLocation = gameManager.getSession().enforceTurnCameraY(event.getPlayer(), event.getTo());
+        if (fixedLocation != null) {
+            event.setTo(fixedLocation);
+        }
     }
 
     @EventHandler
