@@ -888,7 +888,7 @@ public final class BoardManager {
     }
 
     private double getSelectionDiameter(double pieceSize) {
-        return Math.max(0.34D, pieceSize * DISPLAY_FOOTPRINT_SCALE * 1.02D);
+        return Math.max(0.28D, pieceSize * DISPLAY_FOOTPRINT_SCALE * 0.82D);
     }
 
     private double getSelectionHeight(PieceData pieceData) {

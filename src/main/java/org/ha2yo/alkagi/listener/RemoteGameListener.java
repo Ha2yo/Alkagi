@@ -37,7 +37,7 @@ import org.ha2yo.alkagi.game.model.PieceData;
 public final class RemoteGameListener implements Listener {
 
     private static final double REMOTE_TRACE_DISTANCE = 256.0D;
-    private static final double SELECTION_RAY_SIZE = 0.18D;
+    private static final double SELECTION_RAY_SIZE = 0.08D;
 
     private final GameManager gameManager;
 
