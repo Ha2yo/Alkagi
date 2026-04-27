@@ -332,7 +332,7 @@ public final class GuideRenderer {
             return;
         }
 
-        viewer.spawnParticle(Particle.DUST, location, 1, 0.01D, 0.0D, 0.01D, 0.0D, dust, true);
+        world.spawnParticle(Particle.DUST, location, 1, 0.01D, 0.0D, 0.01D, 0.0D, dust, true);
     }
 
     /**

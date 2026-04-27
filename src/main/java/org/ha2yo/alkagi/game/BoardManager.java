@@ -180,8 +180,7 @@ public final class BoardManager {
     }
 
     private ItemStack createPieceItem(TeamType teamType) {
-        Material material = teamType == TeamType.BLUE ? Material.FIRE_CHARGE : Material.SNOWBALL;
-        ItemStack itemStack = new ItemStack(material);
+        ItemStack itemStack = new ItemStack(Material.SNOWBALL);
         ItemMeta meta = itemStack.getItemMeta();
         if (meta != null) {
             meta.setItemModel(teamType == TeamType.BLUE ? BLUE_PIECE_ITEM_MODEL : RED_PIECE_ITEM_MODEL);
