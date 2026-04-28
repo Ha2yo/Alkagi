@@ -1282,7 +1282,7 @@ public final class GameSession {
     }
 
     private void resetAfterDelay() {
-        plugin.getServer().getScheduler().runTaskLater(plugin, this::reset, 100L);
+        reset();
     }
 
     private void decideOpeningTeam() {
