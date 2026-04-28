@@ -18,12 +18,14 @@ public final class PresetRepository {
 
     private final File file;
     private final YamlConfiguration config;
+    private final ArenaData arenaData;
 
-    public PresetRepository(JavaPlugin plugin) {
+    public PresetRepository(JavaPlugin plugin, ArenaData arenaData) {
         if (!plugin.getDataFolder().exists()) {
             plugin.getDataFolder().mkdirs();
         }
 
+        this.arenaData = arenaData;
         this.file = new File(plugin.getDataFolder(), "presets.yml");
         this.config = YamlConfiguration.loadConfiguration(file);
     }
@@ -92,7 +94,13 @@ public final class PresetRepository {
         for (java.util.Map<?, ?> raw : rawList) {
             Location location = readLocation(raw);
             if (location != null) {
-                presetData.addPiece(teamType, location, readPieceSize(raw, defaultPieceSize), readLabelText(raw));
+                presetData.addPiece(
+                    teamType,
+                    location,
+                    readPieceSize(raw, defaultPieceSize),
+                    readHeightScale(raw),
+                    readLabelText(raw)
+                );
             }
         }
     }
@@ -111,6 +119,7 @@ public final class PresetRepository {
             entry.put("y", location.getY());
             entry.put("z", location.getZ());
             entry.put("size", piece.pieceSize());
+            entry.put("height", piece.heightScale());
             if (piece.labelText() != null) {
                 entry.put("label", piece.labelText());
             }
@@ -150,6 +159,14 @@ public final class PresetRepository {
             return defaultPieceSize;
         }
         return Math.max(0.5D, toDouble(value));
+    }
+
+    private double readHeightScale(java.util.Map<?, ?> map) {
+        Object value = map.get("height");
+        if (value == null) {
+            return arenaData.getPieceHeightScale();
+        }
+        return Math.max(0.1D, toDouble(value));
     }
 
     private @Nullable String readLabelText(java.util.Map<?, ?> map) {

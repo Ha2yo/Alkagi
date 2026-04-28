@@ -28,11 +28,11 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
     private static final List<String> SUBCOMMANDS = List.of(
         "status", "start", "forcestart", "stop", "reset",
         "setboardpos1", "setboardpos2", "setlobby", "setspectator",
-        "setblueplace", "setredplace", "setturntime", "setpiecesize", "setcontrolradius",
+        "setblueplace", "setredplace", "setturntime", "setpiecesize", "setpieceheight", "setcontrolradius",
         "kick", "preset"
     );
     private static final List<String> PRESET_SUBCOMMANDS = List.of(
-        "list", "edit", "team", "label", "relabel", "save", "clear", "cancel", "delete"
+        "list", "edit", "team", "label", "relabel", "resize", "height", "save", "clear", "cancel", "delete"
     );
     private static final List<String> PRESET_LABEL_SUGGESTIONS = List.of(
         "楚", "士", "车", "包", "马", "象", "卒",
@@ -66,6 +66,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "setredplace", "setwhiteplace" -> handleSetPlacement(sender, TeamType.RED);
             case "setturntime" -> handleSetTurnTime(sender, args);
             case "setpiecesize" -> handleSetPieceSize(sender, args);
+            case "setpieceheight" -> handleSetPieceHeight(sender, args);
             case "setcontrolradius" -> handleSetControlRadius(sender);
             case "kick" -> handleKick(sender, args);
             case "preset" -> handlePreset(sender, args);
@@ -354,6 +355,32 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean handleSetPieceHeight(CommandSender sender, String[] args) {
+        if (!requireAdmin(sender)) {
+            return true;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(Component.text("/alkagi setpieceheight <scale>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        double heightScale = parseDouble(args[1], -1.0D);
+        if (heightScale <= 0.0D) {
+            sender.sendMessage(Component.text("높이 배율은 0보다 큰 숫자여야 합니다.", NamedTextColor.RED));
+            return true;
+        }
+
+        gameManager.getArenaData().setPieceHeightScale(heightScale);
+        gameManager.getBoardManager().setActivePieceHeightScale(gameManager.getArenaData().getPieceHeightScale());
+        saveArenaData();
+        sender.sendMessage(Component.text(
+            "말 높이 배율을 "
+                + String.format("%.2f", gameManager.getArenaData().getPieceHeightScale()) + "배로 설정했습니다.",
+            NamedTextColor.GREEN
+        ));
+        return true;
+    }
+
     private boolean handleSetControlRadius(CommandSender sender) {
         if (!requireAdmin(sender)) {
             return true;
@@ -412,6 +439,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "team" -> handlePresetTeam(sender, args);
             case "label" -> handlePresetLabel(sender, args);
             case "relabel" -> handlePresetRelabel(sender, args);
+            case "resize" -> handlePresetResize(sender, args);
+            case "height" -> handlePresetHeight(sender, args);
             case "save" -> handlePresetSave(sender);
             case "clear" -> handlePresetClear(sender);
             case "cancel" -> handlePresetCancel(sender);
@@ -549,6 +578,68 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             "마지막으로 배치한 " + presetEditor.getSelectedTeam().getDisplayName()
                 + " 말 글자를 " + presetEditor.getLabelText() + " 로 변경했습니다.",
             presetEditor.getSelectedTeam().getColor()
+        ));
+        return true;
+    }
+
+    private boolean handlePresetResize(CommandSender sender, String[] args) {
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+        if (!presetEditor.isEditing()) {
+            sender.sendMessage(Component.text("먼저 /alkagi preset edit <이름> 으로 편집을 시작해 주세요.", NamedTextColor.RED));
+            return true;
+        }
+        if (args.length < 3) {
+            sender.sendMessage(Component.text("/alkagi preset resize <배율>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        double scale = parseDouble(args[2], -1.0D);
+        if (scale <= 0.0D) {
+            sender.sendMessage(Component.text("배율은 0보다 큰 숫자여야 합니다.", NamedTextColor.RED));
+            return true;
+        }
+
+        int resizedCount = presetEditor.resizeCurrentPieces(scale);
+        if (resizedCount < 0) {
+            sender.sendMessage(Component.text("프리셋 편집 중에만 크기를 조절할 수 있습니다.", NamedTextColor.RED));
+            return true;
+        }
+
+        sender.sendMessage(Component.text(
+            "현재 프리셋 돌 " + resizedCount + "개의 크기를 "
+                + String.format("%.2f", scale) + "배로 조절했습니다.",
+            NamedTextColor.GREEN
+        ));
+        return true;
+    }
+
+    private boolean handlePresetHeight(CommandSender sender, String[] args) {
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+        if (!presetEditor.isEditing()) {
+            sender.sendMessage(Component.text("먼저 /alkagi preset edit <이름> 으로 편집을 시작해 주세요.", NamedTextColor.RED));
+            return true;
+        }
+        if (args.length < 3) {
+            sender.sendMessage(Component.text("/alkagi preset height <높이배율>", NamedTextColor.YELLOW));
+            return true;
+        }
+
+        double heightScale = parseDouble(args[2], -1.0D);
+        if (heightScale <= 0.0D) {
+            sender.sendMessage(Component.text("높이 배율은 0보다 큰 숫자여야 합니다.", NamedTextColor.RED));
+            return true;
+        }
+
+        int updatedCount = presetEditor.setCurrentPiecesHeight(heightScale);
+        if (updatedCount < 0) {
+            sender.sendMessage(Component.text("프리셋 편집 중에만 높이를 조절할 수 있습니다.", NamedTextColor.RED));
+            return true;
+        }
+
+        sender.sendMessage(Component.text(
+            "현재 프리셋 돌 " + updatedCount + "개의 높이를 "
+                + String.format("%.2f", presetEditor.getPieceHeightScale()) + "배로 조절했습니다.",
+            NamedTextColor.GREEN
         ));
         return true;
     }
@@ -719,6 +810,10 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             return List.of("1.8", "2.0", "2.35", "2.6", "3.0");
         }
 
+        if (args.length == 2 && "setpieceheight".equalsIgnoreCase(args[0])) {
+            return List.of("0.5", "0.75", "1.0", "1.25", "1.5");
+        }
+
         if (args.length == 2 && "kick".equalsIgnoreCase(args[0])) {
             return gameManager.getSession().getParticipants().stream()
                 .map(playerId -> gameManager.getPlugin().getServer().getPlayer(playerId))
@@ -741,6 +836,8 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
                     .toList();
                 case "team" -> List.of("blue", "red");
                 case "label", "relabel" -> PRESET_LABEL_SUGGESTIONS;
+                case "resize" -> List.of("0.8", "0.9", "1.1", "1.2", "1.5");
+                case "height" -> List.of("0.5", "0.75", "1.0", "1.25", "1.5");
                 default -> new ArrayList<>();
             };
         }

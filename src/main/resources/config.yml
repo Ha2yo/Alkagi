@@ -2,10 +2,40 @@ arena: {}
 
 settings:
   piece-size: 2.35
+  piece-height-scale: 1.0
   control-radius: piece-size * 2.5
   turn-time-seconds: 30
 
 music:
   sound-key: "alkagi.ingame"
-  volume: 0.1225
+  sound-keys:
+    - "alkagi.ingame_1"
+    - "alkagi.ingame_2"
+    - "alkagi.ingame_3"
+    - "alkagi.ingame_4"
+    - "alkagi.ingame_5"
+  tracks:
+    - sound-key: "alkagi.ingame_1"
+      title: "Unsquare Dance - Dave Brubeck"
+      duration-seconds: 120
+    - sound-key: "alkagi.ingame_2"
+      title: "C Jam Blues - Oscar Peterson"
+      duration-seconds: 202
+    - sound-key: "alkagi.ingame_3"
+      title: "Green Onion - Booker T. & The M.G's"
+      duration-seconds: 175
+    - sound-key: "alkagi.ingame_4"
+      title: "Baby Elephant Walk - Henry Mancini"
+      duration-seconds: 162
+    - sound-key: "alkagi.ingame_5"
+      title: "Lullaby of Birdland - George Shearing Quintet"
+      duration-seconds: 163
+  titles:
+    "alkagi.ingame_1": "Unsquare Dance - Dave Brubeck"
+    "alkagi.ingame_2": "C Jam Blues - Oscar Peterson"
+    "alkagi.ingame_3": "Green Onion - Booker T. & The M.G's"
+    "alkagi.ingame_4": "Baby Elephant Walk - Henry Mancini"
+    "alkagi.ingame_5": "Lullaby of Birdland - George Shearing Quintet"
+  volume: 1.0
   loop-seconds: 120
+  gap-seconds: 2

@@ -11,6 +11,7 @@ import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
@@ -23,6 +24,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.EulerAngle;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -50,15 +52,19 @@ public final class BoardManager {
     private static final String PIECE_ENTITY_MARKER = "piece";
 
     private static final double DISPLAY_FOOTPRINT_SCALE = 0.57D;
-    private static final double LABEL_FOOTPRINT_SCALE = 4.0D;
+    private static final double LABEL_FOOTPRINT_SCALE = 3.3D;
     private static final float LABEL_BOLD_OFFSET = 0.018F;
-    private static final float LABEL_DEPTH_OFFSET = 0.65F;
+    private static final float LABEL_DEPTH_OFFSET = 0.55F;
     private static final double FRICTION = 0.86D;
     private static final double ROLLING_RESISTANCE = 0.035D;
     private static final double STOP_THRESHOLD = 0.05D;
     public static final double MIN_LAUNCH_POWER = 0.5D;
     public static final double MAX_LAUNCH_POWER = 10.0D;
+    private static final double LAUNCH_POWER_VELOCITY_SCALE = 2.4D;
     private static final double DEFAULT_PIECE_SIZE = 2.35D;
+    private static final double DISPLAY_HEIGHT_SCALE_MULTIPLIER = 3.0D;
+    private static final double PIECE_MODEL_MIN_Y = 0.5D;
+    private static final double MODEL_UNIT_SIZE = 16.0D;
     private static final double COLLISION_RESTITUTION = 1.0D;
     private static final double OBSTACLE_RESTITUTION = 0.82D;
     private static final double MAX_SUBSTEP_DISTANCE = 0.18D;
@@ -130,7 +136,11 @@ public final class BoardManager {
     }
 
     public PieceData spawnPiece(TeamType teamType, int pieceId, Location location, double pieceSize) {
-        return spawnPiece(teamType, pieceId, location, pieceSize, null);
+        return spawnPiece(teamType, pieceId, location, pieceSize, arenaData.getPieceHeightScale(), null);
+    }
+
+    public PieceData spawnPiece(TeamType teamType, int pieceId, Location location, double pieceSize, double heightScale) {
+        return spawnPiece(teamType, pieceId, location, pieceSize, heightScale, null);
     }
 
     public PieceData spawnPiece(
@@ -138,6 +148,17 @@ public final class BoardManager {
             int pieceId,
             Location location,
             double pieceSize,
+            @Nullable String labelText
+    ) {
+        return spawnPiece(teamType, pieceId, location, pieceSize, arenaData.getPieceHeightScale(), labelText);
+    }
+
+    public PieceData spawnPiece(
+            TeamType teamType,
+            int pieceId,
+            Location location,
+            double pieceSize,
+            double heightScale,
             @Nullable String labelText
     ) {
         Location spawnLocation = normalizePieceLocation(location);
@@ -160,7 +181,7 @@ public final class BoardManager {
 
         Interaction interaction = (Interaction) world.spawnEntity(spawnLocation, EntityType.INTERACTION);
         interaction.setResponsive(true);
-        PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation, pieceSize, labelText);
+        PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation, pieceSize, heightScale, labelText);
         configureInteractionHitbox(interaction, pieceData);
         markPieceEntity(interaction);
 
@@ -263,6 +284,14 @@ public final class BoardManager {
         }
     }
 
+    public void setActivePieceHeightScale(double heightScale) {
+        Set<PieceData> pieces = new HashSet<>(pieceByEntityId.values());
+        for (PieceData piece : pieces) {
+            piece.setHeightScale(heightScale);
+        }
+        refreshPieceDisplays();
+    }
+
     public void updatePieceLabel(PieceData pieceData, String labelText) {
         pieceData.setLabelText(labelText);
         removePieceLabels(pieceData);
@@ -338,7 +367,7 @@ public final class BoardManager {
         }
 
         double normalizedDistance = Math.min(direction.length() / getLaunchControlRadius(), 1.0D);
-        double power = applyLaunchPowerCurve(normalizedDistance * MAX_LAUNCH_POWER);
+        double power = normalizedDistance * MAX_LAUNCH_POWER * LAUNCH_POWER_VELOCITY_SCALE;
 
         double sizePenalty = getLaunchSizePenalty(selectedPiece);
 
@@ -353,9 +382,8 @@ public final class BoardManager {
         }
 
         double clampedPower = Math.max(MIN_LAUNCH_POWER, Math.min(MAX_LAUNCH_POWER, launchPower));
-        double power = applyLaunchPowerCurve(clampedPower);
         double sizePenalty = getLaunchSizePenalty(selectedPiece);
-        return flatDirection.normalize().multiply(power * sizePenalty);
+        return flatDirection.normalize().multiply(clampedPower * LAUNCH_POWER_VELOCITY_SCALE * sizePenalty);
     }
 
     private double getLaunchSizePenalty(PieceData pieceData) {
@@ -365,23 +393,16 @@ public final class BoardManager {
             return 1.0D;
         }
 
-        return Math.max(0.45D, 1.0D / Math.pow(sizeRatio, 0.2D));
-    }
-
-    private double applyLaunchPowerCurve(double linearPower) {
-        double softPowerLimit = MAX_LAUNCH_POWER / 2.0D;
-        if (linearPower > softPowerLimit) {
-            return linearPower;
-        }
-
-        double normalizedSoftPower = linearPower / softPowerLimit;
-        return normalizedSoftPower * normalizedSoftPower * normalizedSoftPower * softPowerLimit;
+        return Math.max(0.28D, 1.0D / Math.pow(sizeRatio, 1.15D));
     }
 
     private void configurePieceDisplay(ItemDisplay display, PieceData pieceData) {
         float pieceSize = (float) pieceData.getPieceSize();
-        float heightScale = (float) DEFAULT_PIECE_SIZE * 3.0F;
-        float lift = Math.max(3.1F, (float) DEFAULT_PIECE_SIZE * 0.635F);
+        float defaultHeightScale = (float) (DEFAULT_PIECE_SIZE * DISPLAY_HEIGHT_SCALE_MULTIPLIER);
+        float heightScale = (float) (defaultHeightScale * pieceData.getHeightScale());
+        float baseLift = Math.max(3.1F, (float) DEFAULT_PIECE_SIZE * 0.635F);
+        float modelBottomOffset = (float) (0.5D - (PIECE_MODEL_MIN_Y / MODEL_UNIT_SIZE));
+        float lift = baseLift + ((heightScale - defaultHeightScale) * modelBottomOffset);
         display.setTransformation(new Transformation(
                 new Vector3f(0.0F, lift, 0.0F),
                 new AxisAngle4f(),
@@ -425,9 +446,9 @@ public final class BoardManager {
         label.setShadowed(false);
         label.setTextOpacity((byte) 255);
         label.setViewRange(256.0F);
-        label.setRotation(0.0F, -90.0F);
+        label.setRotation(getPieceLabelYaw(pieceData.getTeamType()), 0.0F);
         label.setTransformation(new Transformation(
-                new Vector3f(scaledLabelOffset.x, 0.26F, scaledDepthOffset + scaledLabelOffset.z),
+                new Vector3f(scaledLabelOffset.x, 0.0F, scaledDepthOffset + scaledLabelOffset.z),
                 new AxisAngle4f((float) Math.toRadians(-90.0D), 1.0F, 0.0F, 0.0F),
                 new Vector3f(labelScale, labelScale, labelScale),
                 new AxisAngle4f()
@@ -440,6 +461,10 @@ public final class BoardManager {
 
     private NamedTextColor getPieceLabelColor(TeamType teamType) {
         return teamType == TeamType.BLUE ? NamedTextColor.BLUE : NamedTextColor.RED;
+    }
+
+    private float getPieceLabelYaw(TeamType teamType) {
+        return teamType == TeamType.BLUE ? 90.0F : -90.0F;
     }
 
     private void markPieceEntity(Entity entity) {
@@ -857,7 +882,7 @@ public final class BoardManager {
         }
 
         Location flattened = location.clone();
-        flattened.setY(base.getY());
+        flattened.setY(findFloorSurfaceY(flattened, base.getY()));
         flattened.setYaw(0.0F);
         flattened.setPitch(0.0F);
         return flattened;
@@ -865,9 +890,40 @@ public final class BoardManager {
 
     private Location normalizePieceLocation(Location location) {
         Location normalized = location.clone();
+        Location base = arenaData.getBoardPos1();
+        if (base != null) {
+            normalized.setY(findFloorSurfaceY(normalized, base.getY()));
+        }
         normalized.setYaw(0.0F);
         normalized.setPitch(0.0F);
         return normalized;
+    }
+
+    private double findFloorSurfaceY(Location location, double fallbackY) {
+        World world = location.getWorld();
+        if (world == null) {
+            return fallbackY;
+        }
+
+        int blockX = (int) Math.floor(location.getX());
+        int blockZ = (int) Math.floor(location.getZ());
+        int baseY = (int) Math.floor(fallbackY);
+        double bestY = Double.NEGATIVE_INFINITY;
+        for (int y = baseY - 2; y <= baseY + 2; y++) {
+            Block block = world.getBlockAt(blockX, y, blockZ);
+            if (block.isEmpty() || block.isPassable()) {
+                continue;
+            }
+
+            BoundingBox boundingBox = block.getBoundingBox();
+            if (boundingBox.getVolume() <= 0.0D) {
+                continue;
+            }
+
+            bestY = Math.max(bestY, boundingBox.getMaxY());
+        }
+
+        return bestY == Double.NEGATIVE_INFINITY ? fallbackY : bestY;
     }
 
     private double samePlaneDistance(Location first, Location second) {

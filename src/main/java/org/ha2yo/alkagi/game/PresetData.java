@@ -10,14 +10,19 @@ import java.util.Map;
 
 public final class PresetData {
 
-    public record PresetPiece(Location location, double pieceSize, @Nullable String labelText) {
+    public record PresetPiece(Location location, double pieceSize, double heightScale, @Nullable String labelText) {
         public PresetPiece(Location location, double pieceSize) {
-            this(location, pieceSize, null);
+            this(location, pieceSize, 1.0D, null);
+        }
+
+        public PresetPiece(Location location, double pieceSize, @Nullable String labelText) {
+            this(location, pieceSize, 1.0D, labelText);
         }
 
         public PresetPiece {
             location = location.clone();
             pieceSize = Math.max(0.5D, pieceSize);
+            heightScale = Math.max(0.1D, heightScale);
             labelText = normalizeLabelText(labelText);
         }
     }
@@ -40,12 +45,22 @@ public final class PresetData {
     }
 
     public void addPiece(TeamType teamType, Location location, double pieceSize, @Nullable String labelText) {
-        piecesByTeam.get(teamType).add(new PresetPiece(location, pieceSize, labelText));
+        addPiece(teamType, location, pieceSize, 1.0D, labelText);
+    }
+
+    public void addPiece(
+            TeamType teamType,
+            Location location,
+            double pieceSize,
+            double heightScale,
+            @Nullable String labelText
+    ) {
+        piecesByTeam.get(teamType).add(new PresetPiece(location, pieceSize, heightScale, labelText));
     }
 
     public List<PresetPiece> getPieces(TeamType teamType) {
         return piecesByTeam.get(teamType).stream()
-            .map(piece -> new PresetPiece(piece.location(), piece.pieceSize(), piece.labelText()))
+            .map(piece -> new PresetPiece(piece.location(), piece.pieceSize(), piece.heightScale(), piece.labelText()))
             .toList();
     }
 

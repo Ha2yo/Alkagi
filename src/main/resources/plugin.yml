@@ -6,7 +6,7 @@ author: Codex
 commands:
   alkagi:
     description: Team alkagi minigame command.
-    usage: /alkagi <status|start|forcestart|stop|reset|kick|setboardpos1|setboardpos2|setlobby|setspectator|setblueplace|setredplace>
+    usage: /alkagi <status|start|forcestart|stop|reset|kick|setboardpos1|setboardpos2|setlobby|setspectator|setblueplace|setredplace|setpieceheight>
 permissions:
   alkagi.admin:
     description: Allows access to alkagi admin commands.

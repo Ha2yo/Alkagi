@@ -26,8 +26,8 @@ public final class GameManager {
         this.plugin = plugin;
         this.arenaData = arenaData;
         this.boardManager = new BoardManager(plugin, arenaData);
-        this.presetRepository = new PresetRepository(plugin);
-        this.presetEditor = new PresetEditor(arenaData, boardManager, presetRepository);
+        this.presetRepository = new PresetRepository(plugin, arenaData);
+        this.presetEditor = new PresetEditor(plugin, arenaData, boardManager, presetRepository);
         this.session = new GameSession(plugin, arenaData, scoreboardManager, boardManager);
     }
 

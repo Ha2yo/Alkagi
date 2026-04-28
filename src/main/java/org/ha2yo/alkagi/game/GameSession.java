@@ -14,6 +14,7 @@ import org.bukkit.SoundCategory;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
@@ -58,8 +59,17 @@ public final class GameSession {
 
     private static final long LAUNCH_GUARD_MILLIS = 500L;
     private static final String GAME_MUSIC_SOUND_KEY = "alkagi.ingame";
+    private static final List<String> DEFAULT_GAME_MUSIC_SOUND_KEYS = List.of(
+        "alkagi.ingame_1",
+        "alkagi.ingame_2",
+        "alkagi.ingame_3",
+        "alkagi.ingame_4",
+        "alkagi.ingame_5"
+    );
+    private static final String GAME_MUSIC_ANNOUNCE_PREFIX = "\uC7AC\uC0DD \uC911: ";
     private static final float GAME_MUSIC_VOLUME = 0.1225F;
     private static final long GAME_MUSIC_LOOP_SECONDS = 120L;
+    private static final long GAME_MUSIC_GAP_SECONDS = 2L;
     private static final NamedTextColor DEFAULT_PLAYER_COLOR = NamedTextColor.GRAY;
     private static final float TURN_CAMERA_FLY_SPEED = 0.6F;
     private static final long NEXT_TURN_DELAY_TICKS = 20L;
@@ -70,6 +80,12 @@ public final class GameSession {
     private static final double SELECTED_PIECE_CAMERA_MAX_LIFT_VELOCITY = 0.55D;
     private static final double SELECTED_PIECE_CAMERA_LIFT_STOP_DISTANCE = 0.05D;
     private static final double LAUNCH_CAMERA_Y_OFFSET = 1.9D;
+    private static final double PIECE_DISPLAY_Y_OFFSET = -0.18D;
+    private static final double DEFAULT_PIECE_SIZE = 2.35D;
+    private static final double DISPLAY_HEIGHT_SCALE_MULTIPLIER = 3.0D;
+    private static final double PIECE_MODEL_MIN_Y = 0.5D;
+    private static final double PIECE_MODEL_MAX_Y = 2.5D;
+    private static final double MODEL_UNIT_SIZE = 16.0D;
     private static final double DEFAULT_LAUNCH_POWER = 5.0D;
     private static final double LAUNCH_POWER_STEP = 0.42D;
     private static final float SELECTED_PIECE_CAMERA_PITCH = 30.0F;
@@ -114,6 +130,9 @@ public final class GameSession {
     private int remainingTurnSeconds;
     private BukkitTask turnTimerTask;
     private BukkitTask gameMusicTask;
+    private BukkitTask gameMusicGapTask;
+    private final List<String> gameMusicQueue = new ArrayList<>();
+    private String currentGameMusicSoundKey;
     private BukkitTask launchCameraTask;
     private BukkitTask selectedCameraLiftTask;
     private ArmorStand launchCameraVehicle;
@@ -415,7 +434,6 @@ public final class GameSession {
             sendToLobby(player);
         }
 
-        startGameMusic();
         decideOpeningTeam();
     }
 
@@ -588,7 +606,7 @@ public final class GameSession {
         eliminatedPiecesByPlayer.remove(playerId);
         ownPiecesEliminatedByPlayer.remove(playerId);
 
-        player.stopSound(getGameMusicSoundKey(), SoundCategory.MASTER);
+        stopGameMusicForPlayer(player);
         clearRemoteControlMode(player);
         applySpectatorState(player);
         Location spectatorLocation = arenaData.getSpectatorLocation();
@@ -782,6 +800,7 @@ public final class GameSession {
                     teamType,
                     spawnLocation,
                     piece.pieceSize(),
+                    piece.heightScale(),
                     piece.labelText()
                 ));
             }
@@ -802,6 +821,7 @@ public final class GameSession {
                     pieceId++,
                     spawnLocation,
                     piece.pieceSize(),
+                    piece.heightScale(),
                     piece.labelText()
                 ));
             }
@@ -1286,6 +1306,7 @@ public final class GameSession {
                 Duration.ofSeconds(2),
                 Duration.ofMillis(400)
             );
+            startGameMusic();
             plugin.getServer().getScheduler().runTaskLater(plugin, this::startNextTurn, 30L);
             return;
         }
@@ -1512,22 +1533,64 @@ public final class GameSession {
 
     private void startGameMusic() {
         stopGameMusic();
-        long loopTicks = Math.max(20L, getGameMusicLoopSeconds() * 20L);
-        playGameMusicOnce();
-        gameMusicTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::playGameMusicOnce, loopTicks, loopTicks);
+        refillGameMusicQueue();
+        playNextGameMusic();
     }
 
-    private void playGameMusicOnce() {
-        String soundKey = getGameMusicSoundKey();
+    private void scheduleNextGameMusic() {
+        if (gameMusicGapTask != null) {
+            gameMusicGapTask.cancel();
+            gameMusicGapTask = null;
+        }
+        if (currentGameMusicSoundKey != null) {
+            stopGameMusicSound(currentGameMusicSoundKey);
+            currentGameMusicSoundKey = null;
+        }
+
+        long gapTicks = Math.max(0L, getGameMusicGapSeconds() * 20L);
+        gameMusicGapTask = plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            gameMusicGapTask = null;
+            if (gameState != GameState.WAITING && gameState != GameState.ENDING) {
+                playNextGameMusic();
+            }
+        }, gapTicks);
+    }
+
+    private void playNextGameMusic() {
+        String soundKey = pollNextGameMusicSoundKey();
+        if (currentGameMusicSoundKey != null && !currentGameMusicSoundKey.equals(soundKey)) {
+            stopGameMusicSound(currentGameMusicSoundKey);
+        }
+        currentGameMusicSoundKey = soundKey;
         float volume = getGameMusicVolume();
+        Component musicTitle = Component.text(GAME_MUSIC_ANNOUNCE_PREFIX + getGameMusicTitle(soundKey), NamedTextColor.AQUA);
         for (UUID participantId : participants) {
             Player participant = plugin.getServer().getPlayer(participantId);
             if (participant == null) {
                 continue;
             }
 
-            participant.playSound(participant.getLocation(), soundKey, SoundCategory.MASTER, volume, 1.0F);
+            participant.playSound(participant.getLocation(), soundKey, SoundCategory.RECORDS, volume, 1.0F);
+            participant.sendMessage(musicTitle);
         }
+        long durationTicks = Math.max(20L, getGameMusicDurationSeconds(soundKey) * 20L);
+        gameMusicTask = plugin.getServer().getScheduler().runTaskLater(plugin, this::scheduleNextGameMusic, durationTicks);
+    }
+
+    private String pollNextGameMusicSoundKey() {
+        if (gameMusicQueue.isEmpty()) {
+            refillGameMusicQueue();
+        }
+        if (gameMusicQueue.isEmpty()) {
+            return getGameMusicSoundKey();
+        }
+        return gameMusicQueue.remove(0);
+    }
+
+    private void refillGameMusicQueue() {
+        gameMusicQueue.clear();
+        gameMusicQueue.addAll(getGameMusicSoundKeys());
+        Collections.shuffle(gameMusicQueue);
     }
 
     private void stopGameMusic() {
@@ -1535,20 +1598,95 @@ public final class GameSession {
             gameMusicTask.cancel();
             gameMusicTask = null;
         }
+        if (gameMusicGapTask != null) {
+            gameMusicGapTask.cancel();
+            gameMusicGapTask = null;
+        }
 
-        String soundKey = getGameMusicSoundKey();
+        for (String soundKey : getGameMusicSoundKeys()) {
+            stopGameMusicSound(soundKey);
+        }
+        if (currentGameMusicSoundKey != null) {
+            stopGameMusicSound(currentGameMusicSoundKey);
+            currentGameMusicSoundKey = null;
+        }
+        gameMusicQueue.clear();
+    }
+
+    private void stopGameMusicSound(String soundKey) {
         for (UUID participantId : participants) {
             Player participant = plugin.getServer().getPlayer(participantId);
             if (participant == null) {
                 continue;
             }
 
-            participant.stopSound(soundKey, SoundCategory.MASTER);
+            participant.stopSound(soundKey, SoundCategory.RECORDS);
+        }
+    }
+
+    private void stopGameMusicForPlayer(Player player) {
+        for (String soundKey : getGameMusicSoundKeys()) {
+            player.stopSound(soundKey, SoundCategory.RECORDS);
+        }
+        if (currentGameMusicSoundKey != null) {
+            player.stopSound(currentGameMusicSoundKey, SoundCategory.RECORDS);
         }
     }
 
     private String getGameMusicSoundKey() {
         return plugin.getConfig().getString("music.sound-key", GAME_MUSIC_SOUND_KEY);
+    }
+
+    private List<String> getGameMusicSoundKeys() {
+        List<String> trackSoundKeys = plugin.getConfig().getMapList("music.tracks").stream()
+            .map(track -> track.get("sound-key"))
+            .filter(String.class::isInstance)
+            .map(String.class::cast)
+            .map(String::trim)
+            .filter(soundKey -> !soundKey.isEmpty())
+            .toList();
+        if (!trackSoundKeys.isEmpty()) {
+            return trackSoundKeys;
+        }
+
+        List<String> soundKeys = plugin.getConfig().getStringList("music.sound-keys").stream()
+            .map(String::trim)
+            .filter(soundKey -> !soundKey.isEmpty())
+            .toList();
+        if (!soundKeys.isEmpty()) {
+            return soundKeys;
+        }
+        if (GAME_MUSIC_SOUND_KEY.equals(getGameMusicSoundKey())) {
+            return DEFAULT_GAME_MUSIC_SOUND_KEYS;
+        }
+        return List.of(getGameMusicSoundKey());
+    }
+
+    private String getGameMusicTitle(String soundKey) {
+        for (Map<?, ?> track : plugin.getConfig().getMapList("music.tracks")) {
+            Object trackSoundKey = track.get("sound-key");
+            if (!(trackSoundKey instanceof String trackSoundKeyText) || !soundKey.equals(trackSoundKeyText.trim())) {
+                continue;
+            }
+
+            Object title = track.get("title");
+            if (title instanceof String titleText && !titleText.trim().isEmpty()) {
+                return titleText.trim();
+            }
+            return soundKey;
+        }
+
+        ConfigurationSection titlesSection = plugin.getConfig().getConfigurationSection("music.titles");
+        if (titlesSection == null) {
+            return soundKey;
+        }
+
+        Object title = titlesSection.getValues(false).get(soundKey);
+        if (title == null) {
+            return soundKey;
+        }
+        String titleText = title.toString().trim();
+        return titleText.isEmpty() ? soundKey : titleText;
     }
 
     private float getGameMusicVolume() {
@@ -1557,6 +1695,33 @@ public final class GameSession {
 
     private long getGameMusicLoopSeconds() {
         return plugin.getConfig().getLong("music.loop-seconds", GAME_MUSIC_LOOP_SECONDS);
+    }
+
+    private long getGameMusicDurationSeconds(String soundKey) {
+        for (Map<?, ?> track : plugin.getConfig().getMapList("music.tracks")) {
+            Object trackSoundKey = track.get("sound-key");
+            if (!(trackSoundKey instanceof String trackSoundKeyText) || !soundKey.equals(trackSoundKeyText.trim())) {
+                continue;
+            }
+
+            Object duration = track.get("duration-seconds");
+            if (duration instanceof Number durationNumber) {
+                return Math.max(1L, durationNumber.longValue());
+            }
+            if (duration instanceof String durationText) {
+                try {
+                    return Math.max(1L, Long.parseLong(durationText.trim()));
+                } catch (NumberFormatException ignored) {
+                    return getGameMusicLoopSeconds();
+                }
+            }
+            return getGameMusicLoopSeconds();
+        }
+        return getGameMusicLoopSeconds();
+    }
+
+    private long getGameMusicGapSeconds() {
+        return plugin.getConfig().getLong("music.gap-seconds", GAME_MUSIC_GAP_SECONDS);
     }
 
     private boolean isPlacementComplete() {
@@ -1894,9 +2059,35 @@ public final class GameSession {
     private Location createSelectedPieceCameraLocation(PieceData pieceData, double liftOffset) {
         return pieceData.getLocation().clone().add(
                 0.0D,
-                SELECTED_PIECE_CAMERA_Y_OFFSET + (pieceData.getPieceSize() * 0.15D) + liftOffset,
+                getSelectedPieceCameraYOffset(pieceData) + liftOffset,
                 0.0D
         );
+    }
+
+    private double getSelectedPieceCameraYOffset(PieceData pieceData) {
+        return SELECTED_PIECE_CAMERA_Y_OFFSET
+            + (pieceData.getPieceSize() * 0.15D)
+            + getPieceHeightCameraDelta(pieceData);
+    }
+
+    private double getLaunchCameraYOffset(PieceData pieceData) {
+        return LAUNCH_CAMERA_Y_OFFSET
+            + (pieceData.getPieceSize() * 0.12D)
+            + getPieceHeightCameraDelta(pieceData);
+    }
+
+    private double getPieceHeightCameraDelta(PieceData pieceData) {
+        return getPieceVisualTopYOffset(pieceData.getHeightScale()) - getPieceVisualTopYOffset(1.0D);
+    }
+
+    private double getPieceVisualTopYOffset(double pieceHeightScale) {
+        double defaultDisplayHeightScale = DEFAULT_PIECE_SIZE * DISPLAY_HEIGHT_SCALE_MULTIPLIER;
+        double displayHeightScale = defaultDisplayHeightScale * Math.max(0.1D, pieceHeightScale);
+        double baseLift = Math.max(3.1D, DEFAULT_PIECE_SIZE * 0.635D);
+        double modelBottomOffset = 0.5D - (PIECE_MODEL_MIN_Y / MODEL_UNIT_SIZE);
+        double modelTopOffset = (PIECE_MODEL_MAX_Y / MODEL_UNIT_SIZE) - 0.5D;
+        double lift = baseLift + ((displayHeightScale - defaultDisplayHeightScale) * modelBottomOffset);
+        return -PIECE_DISPLAY_Y_OFFSET + lift + (modelTopOffset * displayHeightScale);
     }
 
     private void startSelectedCameraLiftTask(Player player) {
@@ -1975,7 +2166,7 @@ public final class GameSession {
                 ? launchCameraVehicle.getLocation()
                 : player.getLocation();
         Location targetLocation = pieceData.getLocation().clone()
-                .add(0.0D, LAUNCH_CAMERA_Y_OFFSET + (pieceData.getPieceSize() * 0.12D), 0.0D);
+                .add(0.0D, getLaunchCameraYOffset(pieceData), 0.0D);
 
         Location nextLocation = targetLocation.clone();
         nextLocation.setYaw(currentLocation.getYaw());

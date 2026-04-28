@@ -13,6 +13,7 @@ import org.jetbrains.annotations.Nullable;
 public final class ArenaData {
 
     private static final double DEFAULT_PIECE_SIZE = 2.35D;
+    private static final double DEFAULT_PIECE_HEIGHT_SCALE = 1.0D;
     private static final double CONTROL_RADIUS_MULTIPLIER = 2.5D;
     private static final int DEFAULT_TURN_TIME_SECONDS = 30;
 
@@ -23,6 +24,7 @@ public final class ArenaData {
     private Location bluePlacementLocation;
     private Location redPlacementLocation;
     private double pieceSize = DEFAULT_PIECE_SIZE;
+    private double pieceHeightScale = DEFAULT_PIECE_HEIGHT_SCALE;
     private int turnTimeSeconds = DEFAULT_TURN_TIME_SECONDS;
 
     /**
@@ -37,6 +39,7 @@ public final class ArenaData {
         arenaData.bluePlacementLocation = readLocationWithFallback(config, "arena.placement.blue", "arena.placement.black");
         arenaData.redPlacementLocation = readLocationWithFallback(config, "arena.placement.red", "arena.placement.white");
         arenaData.pieceSize = Math.max(0.5D, config.getDouble("settings.piece-size", DEFAULT_PIECE_SIZE));
+        arenaData.pieceHeightScale = Math.max(0.1D, config.getDouble("settings.piece-height-scale", DEFAULT_PIECE_HEIGHT_SCALE));
         arenaData.turnTimeSeconds = Math.max(1, config.getInt("settings.turn-time-seconds", DEFAULT_TURN_TIME_SECONDS));
         return arenaData;
     }
@@ -54,6 +57,7 @@ public final class ArenaData {
         config.set("arena.placement.black", null);
         config.set("arena.placement.white", null);
         config.set("settings.piece-size", pieceSize);
+        config.set("settings.piece-height-scale", pieceHeightScale);
         config.set("settings.control-radius", null);
         config.set("settings.turn-time-seconds", turnTimeSeconds);
     }
@@ -111,6 +115,14 @@ public final class ArenaData {
 
     public void setPieceSize(double pieceSize) {
         this.pieceSize = Math.max(0.5D, pieceSize);
+    }
+
+    public double getPieceHeightScale() {
+        return pieceHeightScale;
+    }
+
+    public void setPieceHeightScale(double pieceHeightScale) {
+        this.pieceHeightScale = Math.max(0.1D, pieceHeightScale);
     }
 
     public double getControlRadius() {
