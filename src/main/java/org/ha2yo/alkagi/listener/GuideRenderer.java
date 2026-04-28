@@ -18,6 +18,7 @@ import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
+import org.ha2yo.alkagi.game.BoardManager;
 import org.ha2yo.alkagi.game.TeamType;
 import org.ha2yo.alkagi.game.model.PieceData;
 import org.ha2yo.alkagi.game.model.TeamData;
@@ -136,18 +137,7 @@ public final class GuideRenderer {
             return;
         }
 
-        Location target = gameManager.getArenaData().projectToBoardPlane(
-                player.getEyeLocation(),
-                player.getEyeLocation().getDirection(),
-                TRACE_DISTANCE
-        );
-        if (target == null) {
-            clearAimMarker(player.getUniqueId());
-            drawPieceHover(player, selectedPiece.getLocation());
-            return;
-        }
-
-        drawAimGuide(player, selectedPiece, target);
+        drawAimGuide(player, selectedPiece, session);
     }
 
     private void drawCurrentTurnTeamPieces(Player viewer, GameSession session) {
@@ -213,10 +203,9 @@ public final class GuideRenderer {
     /**
      * 선택된 말 주변에는 조작 반경 원과 발사 방향 화살표를 함께 표시한다.
      */
-    private void drawAimGuide(Player player, PieceData selectedPiece, Location target) {
+    private void drawAimGuide(Player player, PieceData selectedPiece, GameSession session) {
         Location origin = selectedPiece.getLocation().clone().add(0.0D, GUIDE_Y_OFFSET, 0.0D);
         double controlRadius = gameManager.getBoardManager().getLaunchControlRadius();
-        Location clampedTarget = gameManager.getBoardManager().clampLaunchTarget(selectedPiece, target);
 
         drawRing(
                 player,
@@ -226,16 +215,15 @@ public final class GuideRenderer {
                 Math.max(32, (int) Math.ceil((Math.PI * 2.0D * controlRadius) / RING_POINT_SPACING))
         );
 
-        Vector launchVector = gameManager.getBoardManager().createLaunchVector(selectedPiece, clampedTarget);
-        double power = launchVector.length();
-        if (power <= 0.0001D) {
+        Vector direction = session.getFlatLaunchDirection(player);
+        if (direction.lengthSquared() <= 0.0001D) {
             clearAimMarker(player.getUniqueId());
             return;
         }
 
-        Vector direction = launchVector.clone().normalize();
+        double power = session.getLaunchPower(player.getUniqueId());
         double maxGuideLength = Math.max(0.35D, controlRadius);
-        double guideLength = Math.min(maxGuideLength, origin.distance(clampedTarget));
+        double guideLength = Math.max(0.2D, maxGuideLength * (power / BoardManager.MAX_LAUNCH_POWER));
         if (guideLength <= 0.0001D) {
             clearAimMarker(player.getUniqueId());
             return;

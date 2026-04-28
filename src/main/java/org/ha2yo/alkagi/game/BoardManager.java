@@ -56,7 +56,8 @@ public final class BoardManager {
     private static final double FRICTION = 0.86D;
     private static final double ROLLING_RESISTANCE = 0.035D;
     private static final double STOP_THRESHOLD = 0.05D;
-    private static final double MAX_POWER = 10.0D;
+    public static final double MIN_LAUNCH_POWER = 0.5D;
+    public static final double MAX_LAUNCH_POWER = 10.0D;
     private static final double DEFAULT_PIECE_SIZE = 2.35D;
     private static final double COLLISION_RESTITUTION = 1.0D;
     private static final double OBSTACLE_RESTITUTION = 0.82D;
@@ -213,11 +214,14 @@ public final class BoardManager {
      * 선택된 말을 발사하고 물리 시뮬레이션이 끝나면 후속 작업을 실행한다.
      */
     public void launchPiece(PieceData selectedPiece, Location targetLocation, Map<TeamType, TeamData> teamDataMap, Runnable onFinished) {
+        launchPiece(selectedPiece, createLaunchVector(selectedPiece, targetLocation), teamDataMap, onFinished);
+    }
+
+    public void launchPiece(PieceData selectedPiece, Vector velocity, Map<TeamType, TeamData> teamDataMap, Runnable onFinished) {
         if (actionRunning) {
             return;
         }
 
-        Vector velocity = createLaunchVector(selectedPiece, targetLocation);
         if (velocity.lengthSquared() <= 0.0001D) {
             onFinished.run();
             return;
@@ -334,11 +338,24 @@ public final class BoardManager {
         }
 
         double normalizedDistance = Math.min(direction.length() / getLaunchControlRadius(), 1.0D);
-        double power = applyLaunchPowerCurve(normalizedDistance * MAX_POWER);
+        double power = applyLaunchPowerCurve(normalizedDistance * MAX_LAUNCH_POWER);
 
         double sizePenalty = getLaunchSizePenalty(selectedPiece);
 
         return direction.normalize().multiply(power * sizePenalty);
+    }
+
+    public Vector createLaunchVector(PieceData selectedPiece, Vector direction, double launchPower) {
+        Vector flatDirection = direction.clone();
+        flatDirection.setY(0.0D);
+        if (flatDirection.lengthSquared() <= 0.0001D) {
+            return new Vector();
+        }
+
+        double clampedPower = Math.max(MIN_LAUNCH_POWER, Math.min(MAX_LAUNCH_POWER, launchPower));
+        double power = applyLaunchPowerCurve(clampedPower);
+        double sizePenalty = getLaunchSizePenalty(selectedPiece);
+        return flatDirection.normalize().multiply(power * sizePenalty);
     }
 
     private double getLaunchSizePenalty(PieceData pieceData) {
@@ -352,7 +369,7 @@ public final class BoardManager {
     }
 
     private double applyLaunchPowerCurve(double linearPower) {
-        double softPowerLimit = MAX_POWER / 2.0D;
+        double softPowerLimit = MAX_LAUNCH_POWER / 2.0D;
         if (linearPower > softPowerLimit) {
             return linearPower;
         }

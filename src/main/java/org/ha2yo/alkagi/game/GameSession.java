@@ -15,6 +15,7 @@ import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
@@ -26,6 +27,7 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
+import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.model.PieceData;
 import org.ha2yo.alkagi.game.model.TeamData;
 import org.ha2yo.alkagi.scoreboard.AlkagiScoreboardManager;
@@ -62,6 +64,15 @@ public final class GameSession {
     private static final float TURN_CAMERA_FLY_SPEED = 0.6F;
     private static final long NEXT_TURN_DELAY_TICKS = 20L;
     private static final long GAME_END_DELAY_TICKS = 20L;
+    private static final double SELECTED_PIECE_CAMERA_Y_OFFSET = 1.15D;
+    private static final double SELECTED_PIECE_CAMERA_JUMP_Y_OFFSET = 5.0D;
+    private static final double SELECTED_PIECE_CAMERA_LIFT_VELOCITY_SCALE = 0.28D;
+    private static final double SELECTED_PIECE_CAMERA_MAX_LIFT_VELOCITY = 0.55D;
+    private static final double SELECTED_PIECE_CAMERA_LIFT_STOP_DISTANCE = 0.05D;
+    private static final double LAUNCH_CAMERA_Y_OFFSET = 1.9D;
+    private static final double DEFAULT_LAUNCH_POWER = 5.0D;
+    private static final double LAUNCH_POWER_STEP = 0.42D;
+    private static final float SELECTED_PIECE_CAMERA_PITCH = 30.0F;
 
     private static final PotionEffect TURN_SPEED_EFFECT =
         new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 9, false, false, false);
@@ -86,6 +97,10 @@ public final class GameSession {
     private final Map<UUID, Integer> heldSlotBackupMap = new java.util.HashMap<>();
     private final Map<UUID, FlightState> flightStateMap = new java.util.HashMap<>();
     private final Map<UUID, TurnCameraState> turnCameraStateMap = new java.util.HashMap<>();
+    private final Map<UUID, Double> launchPowerMap = new java.util.HashMap<>();
+    private final Map<UUID, Location> selectedCameraReturnLocationMap = new java.util.HashMap<>();
+    private final Map<UUID, Integer> launchCameraRotationGraceTicks = new java.util.HashMap<>();
+    private final Map<UUID, Boolean> selectedCameraLiftedMap = new java.util.HashMap<>();
 
     private final BossBar turnTimerBar = Bukkit.createBossBar("", BarColor.YELLOW, BarStyle.SOLID);
 
@@ -99,6 +114,9 @@ public final class GameSession {
     private int remainingTurnSeconds;
     private BukkitTask turnTimerTask;
     private BukkitTask gameMusicTask;
+    private BukkitTask launchCameraTask;
+    private BukkitTask selectedCameraLiftTask;
+    private ArmorStand launchCameraVehicle;
 
     public GameSession(
             JavaPlugin plugin,
@@ -234,6 +252,8 @@ public final class GameSession {
     public void stop() {
         stopTurnTimer();
         stopGameMusic();
+        stopLaunchCameraFollow();
+        stopSelectedCameraLiftTask();
         gameState = GameState.ENDING;
         sendAllOnlinePlayersToLobby();
         scoreboardManager.showResult(this, null);
@@ -246,6 +266,8 @@ public final class GameSession {
     public void reset() {
         stopTurnTimer();
         stopGameMusic();
+        stopLaunchCameraFollow();
+        stopSelectedCameraLiftTask();
         gameState = GameState.WAITING;
         currentTurnPlayer = null;
         currentTurnTeam = TeamType.BLUE;
@@ -253,6 +275,10 @@ public final class GameSession {
         selectedPiece = null;
         lastSelectedPlayerId = null;
         lastSelectedAtMillis = 0L;
+        launchPowerMap.clear();
+        selectedCameraReturnLocationMap.clear();
+        launchCameraRotationGraceTicks.clear();
+        selectedCameraLiftedMap.clear();
         restoreAllTurnCameras();
         playerTeamMap.clear();
         placementPlayers.clear();
@@ -412,6 +438,7 @@ public final class GameSession {
         }
 
         currentTurnPlayer = next;
+        launchPowerMap.put(next, DEFAULT_LAUNCH_POWER);
         scoreboardManager.updateGameBoard(this);
         refreshTurnIndicators();
         Player player = plugin.getServer().getPlayer(next);
@@ -421,7 +448,7 @@ public final class GameSession {
             giveRemoteController(player);
             showCurrentTurnTitle(player);
             player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 1.0F, 1.35F);
-            player.sendMessage(Component.text("당신 차례입니다. 블레이즈 막대로 말을 우클릭해 주세요. (한번만 클릭)", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text("당신 차례입니다. 블레이즈 막대로 말을 우클릭해 주세요.", NamedTextColor.YELLOW));
         }
         startTurnTimer();
     }
@@ -435,11 +462,16 @@ public final class GameSession {
         }
 
         stopTurnTimer();
+        stopSelectedCameraLiftTask();
         UUID finishedTurnPlayer = currentTurnPlayer;
         TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
         currentTeamData.pushBackPlayer(currentTurnPlayer);
         currentTurnPlayer = null;
         selectedPiece = null;
+        launchPowerMap.remove(finishedTurnPlayer);
+        selectedCameraReturnLocationMap.remove(finishedTurnPlayer);
+        launchCameraRotationGraceTicks.remove(finishedTurnPlayer);
+        selectedCameraLiftedMap.remove(finishedTurnPlayer);
 
         if (isDraw()) {
             scheduleEndGame(null);
@@ -483,6 +515,8 @@ public final class GameSession {
     ) {
         stopTurnTimer();
         stopGameMusic();
+        stopLaunchCameraFollow();
+        stopSelectedCameraLiftTask();
         gameState = GameState.ENDING;
         restoreAllTurnCameras();
         clearAllPlayerInventories();
@@ -501,6 +535,10 @@ public final class GameSession {
     ) {
         turnCameraStateMap.remove(playerId);
         flightStateMap.remove(playerId);
+        launchPowerMap.remove(playerId);
+        selectedCameraReturnLocationMap.remove(playerId);
+        launchCameraRotationGraceTicks.remove(playerId);
+        selectedCameraLiftedMap.remove(playerId);
         TeamType teamType = playerTeamMap.get(playerId);
         participants.remove(playerId);
         playerTeamMap.remove(playerId);
@@ -531,10 +569,16 @@ public final class GameSession {
         boolean wasPlacementPlayer = placementPlayers.values().stream().anyMatch(playerId::equals);
         if (wasCurrentTurnPlayer) {
             stopTurnTimer();
+            stopLaunchCameraFollow();
+            stopSelectedCameraLiftTask();
+            removeTurnCameraInvisibility(player);
             currentTurnPlayer = null;
             selectedPiece = null;
             lastSelectedPlayerId = null;
             lastSelectedAtMillis = 0L;
+            selectedCameraReturnLocationMap.remove(playerId);
+            launchCameraRotationGraceTicks.remove(playerId);
+            selectedCameraLiftedMap.remove(playerId);
         }
 
         participants.remove(playerId);
@@ -840,9 +884,13 @@ public final class GameSession {
             return null;
         }
 
+        selectedCameraReturnLocationMap.put(player.getUniqueId(), player.getLocation().clone());
         selectedPiece = pieceData;
         lastSelectedPlayerId = player.getUniqueId();
         lastSelectedAtMillis = System.currentTimeMillis();
+        applyTurnCameraInvisibility(player);
+        moveTurnCameraToSelectedPiece(player, pieceData);
+        startSelectedCameraLiftTask(player);
         return pieceData;
     }
 
@@ -864,6 +912,12 @@ public final class GameSession {
         selectedPiece = null;
         lastSelectedPlayerId = null;
         lastSelectedAtMillis = 0L;
+        stopSelectedCameraLiftTask();
+        selectedCameraLiftedMap.remove(player.getUniqueId());
+        launchPowerMap.put(player.getUniqueId(), DEFAULT_LAUNCH_POWER);
+        restoreSelectedCameraReturnLocation(player);
+        removeTurnCameraInvisibility(player);
+        player.setFlySpeed(TURN_CAMERA_FLY_SPEED);
         return true;
     }
 
@@ -873,6 +927,30 @@ public final class GameSession {
     public boolean launchSelectedPiece(
             Player player,
             Location targetLocation
+    ) {
+        if (selectedPiece == null) {
+            return false;
+        }
+        return launchSelectedPiece(player, boardManager.createLaunchVector(selectedPiece, targetLocation));
+    }
+
+    public boolean launchSelectedPiece(Player player) {
+        if (selectedPiece == null) {
+            return false;
+        }
+        Vector direction = getFlatLaunchDirection(player);
+        if (direction.lengthSquared() <= 0.0001D) {
+            return false;
+        }
+        return launchSelectedPiece(
+                player,
+                boardManager.createLaunchVector(selectedPiece, direction, getLaunchPower(player.getUniqueId()))
+        );
+    }
+
+    private boolean launchSelectedPiece(
+            Player player,
+            Vector launchVector
     ) {
         if (gameState != GameState.PLAYING || !isCurrentTurnPlayer(player.getUniqueId()) || selectedPiece == null || boardManager.isActionRunning()) {
             return false;
@@ -891,7 +969,12 @@ public final class GameSession {
         int ownAliveBefore = teamDataMap.get(teamType).getAlivePieceCount();
         int opponentAliveBefore = teamDataMap.get(targetTeam).getAlivePieceCount();
         stopTurnTimer();
-        boardManager.launchPiece(selectedPiece, targetLocation, teamDataMap, () -> {
+        PieceData launchedPiece = selectedPiece;
+        selectedCameraReturnLocationMap.remove(player.getUniqueId());
+        stopSelectedCameraLiftTask();
+        selectedCameraLiftedMap.remove(player.getUniqueId());
+        startLaunchCameraFollow(player, launchedPiece);
+        boardManager.launchPiece(selectedPiece, launchVector, teamDataMap, () -> {
             int ownAliveAfter = teamDataMap.get(teamType).getAlivePieceCount();
             int opponentAliveAfter = teamDataMap.get(targetTeam).getAlivePieceCount();
             int ownEliminatedCount = Math.max(0, ownAliveBefore - ownAliveAfter);
@@ -905,6 +988,45 @@ public final class GameSession {
             endTurn();
         });
         return true;
+    }
+
+    public boolean adjustLaunchPower(Player player, double delta) {
+        if (gameState != GameState.PLAYING
+                || !isCurrentTurnPlayer(player.getUniqueId())
+                || selectedPiece == null
+                || boardManager.isActionRunning()) {
+            return false;
+        }
+
+        UUID playerId = player.getUniqueId();
+        double currentPower = getLaunchPower(playerId);
+        double updatedPower = Math.max(
+                BoardManager.MIN_LAUNCH_POWER,
+                Math.min(BoardManager.MAX_LAUNCH_POWER, currentPower + delta)
+        );
+        launchPowerMap.put(playerId, updatedPower);
+        return Math.abs(updatedPower - currentPower) > 0.0001D;
+    }
+
+    public boolean increaseLaunchPower(Player player) {
+        return adjustLaunchPower(player, LAUNCH_POWER_STEP);
+    }
+
+    public boolean decreaseLaunchPower(Player player) {
+        return adjustLaunchPower(player, -LAUNCH_POWER_STEP);
+    }
+
+    public double getLaunchPower(UUID playerId) {
+        return launchPowerMap.getOrDefault(playerId, DEFAULT_LAUNCH_POWER);
+    }
+
+    public Vector getFlatLaunchDirection(Player player) {
+        Vector direction = player.getEyeLocation().getDirection();
+        direction.setY(0.0D);
+        if (direction.lengthSquared() <= 0.0001D) {
+            return new Vector();
+        }
+        return direction.normalize();
     }
 
     private boolean justSelectedPiece(UUID playerId) {
@@ -1567,6 +1689,7 @@ public final class GameSession {
 
             player.setGlowing(false);
             removeTurnBuff(player);
+            removeTurnCameraInvisibility(player);
             player.sendActionBar(Component.empty());
         }
     }
@@ -1577,6 +1700,7 @@ public final class GameSession {
             heldSlotBackupMap.remove(player.getUniqueId());
             player.getInventory().clear();
             removeTurnBuff(player);
+            removeTurnCameraInvisibility(player);
             restoreFlightState(player);
             restoreOriginalArmor(player);
         }
@@ -1591,6 +1715,7 @@ public final class GameSession {
         player.setSilent(false);
         player.setGlowing(false);
         removeTurnBuff(player);
+        removeTurnCameraInvisibility(player);
 
         ItemStack[] contents = inventoryBackupMap.remove(player.getUniqueId());
         if (contents != null) {
@@ -1616,9 +1741,31 @@ public final class GameSession {
         player.removePotionEffect(PotionEffectType.SPEED);
     }
 
+    private void applyTurnCameraInvisibility(Player player) {
+        player.addPotionEffect(SPECTATOR_INVISIBILITY_EFFECT);
+        player.getInventory().setArmorContents(new ItemStack[4]);
+        player.setGlowing(false);
+        player.updateInventory();
+    }
+
+    private void removeTurnCameraInvisibility(Player player) {
+        if (playerTeamMap.get(player.getUniqueId()) == null && gameState != GameState.WAITING) {
+            return;
+        }
+
+        player.removePotionEffect(PotionEffectType.INVISIBILITY);
+        enforceTeamArmor(player);
+        player.setGlowing(isCurrentTurnPlayer(player.getUniqueId()));
+    }
+
     private void scheduleNextTurn(UUID finishedTurnPlayer) {
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            stopLaunchCameraFollow();
             restoreTurnCamera(finishedTurnPlayer);
+            Player finishedPlayer = plugin.getServer().getPlayer(finishedTurnPlayer);
+            if (finishedPlayer != null) {
+                removeTurnCameraInvisibility(finishedPlayer);
+            }
             startNextTurn();
         }, NEXT_TURN_DELAY_TICKS);
     }
@@ -1651,7 +1798,7 @@ public final class GameSession {
 
     public @Nullable Location enforceTurnCameraY(Player player, Location targetLocation) {
         TurnCameraState state = turnCameraStateMap.get(player.getUniqueId());
-        if (state == null) {
+        if (state == null || selectedPiece != null || boardManager.isActionRunning()) {
             return null;
         }
         if (Math.abs(targetLocation.getY() - state.fixedY()) <= 0.0001D) {
@@ -1661,6 +1808,18 @@ public final class GameSession {
         Location fixedLocation = targetLocation.clone();
         fixedLocation.setY(state.fixedY());
         return fixedLocation;
+    }
+
+    public void noteLaunchCameraRotation(Player player, Location from, Location to) {
+        if (launchCameraTask == null || !boardManager.isActionRunning()) {
+            return;
+        }
+        if (Math.abs(from.getYaw() - to.getYaw()) <= 0.001F
+                && Math.abs(from.getPitch() - to.getPitch()) <= 0.001F) {
+            return;
+        }
+
+        launchCameraRotationGraceTicks.put(player.getUniqueId(), 2);
     }
 
     private void enterTurnCamera(Player player) {
@@ -1678,6 +1837,173 @@ public final class GameSession {
         player.setAllowFlight(true);
         player.setFlying(true);
         player.setFlySpeed(TURN_CAMERA_FLY_SPEED);
+    }
+
+    private void moveTurnCameraToSelectedPiece(Player player, PieceData pieceData) {
+        Location currentLocation = player.getLocation();
+        Location cameraLocation = createSelectedPieceCameraLocation(pieceData, 0.0D);
+        cameraLocation.setYaw(currentLocation.getYaw());
+        cameraLocation.setPitch(SELECTED_PIECE_CAMERA_PITCH);
+        player.teleport(cameraLocation);
+        player.setAllowFlight(true);
+        player.setFlying(true);
+        player.setFlySpeed(0.0F);
+    }
+
+    public void setSelectedPieceCameraLift(Player player, boolean lifted) {
+        if (gameState != GameState.PLAYING
+                || !isCurrentTurnPlayer(player.getUniqueId())
+                || selectedPiece == null
+                || boardManager.isActionRunning()) {
+            selectedCameraLiftedMap.remove(player.getUniqueId());
+            return;
+        }
+
+        selectedCameraLiftedMap.put(player.getUniqueId(), lifted);
+    }
+
+    private void updateSelectedPieceCameraLift(Player player) {
+        if (gameState != GameState.PLAYING
+                || !isCurrentTurnPlayer(player.getUniqueId())
+                || selectedPiece == null
+                || boardManager.isActionRunning()) {
+            return;
+        }
+
+        boolean lifted = selectedCameraLiftedMap.getOrDefault(player.getUniqueId(), false);
+        double liftOffset = lifted ? SELECTED_PIECE_CAMERA_JUMP_Y_OFFSET : 0.0D;
+        Location currentLocation = player.getLocation();
+        Location targetLocation = createSelectedPieceCameraLocation(selectedPiece, liftOffset);
+
+        double yDelta = targetLocation.getY() - currentLocation.getY();
+        if (Math.abs(yDelta) <= SELECTED_PIECE_CAMERA_LIFT_STOP_DISTANCE) {
+            player.setVelocity(new Vector(0.0D, 0.0D, 0.0D));
+            return;
+        }
+
+        double yVelocity = Math.max(
+                -SELECTED_PIECE_CAMERA_MAX_LIFT_VELOCITY,
+                Math.min(SELECTED_PIECE_CAMERA_MAX_LIFT_VELOCITY, yDelta * SELECTED_PIECE_CAMERA_LIFT_VELOCITY_SCALE)
+        );
+        player.setVelocity(new Vector(0.0D, yVelocity, 0.0D));
+        player.setAllowFlight(true);
+        player.setFlying(true);
+        player.setFlySpeed(0.0F);
+    }
+
+    private Location createSelectedPieceCameraLocation(PieceData pieceData, double liftOffset) {
+        return pieceData.getLocation().clone().add(
+                0.0D,
+                SELECTED_PIECE_CAMERA_Y_OFFSET + (pieceData.getPieceSize() * 0.15D) + liftOffset,
+                0.0D
+        );
+    }
+
+    private void startSelectedCameraLiftTask(Player player) {
+        stopSelectedCameraLiftTask();
+        selectedCameraLiftedMap.put(player.getUniqueId(), false);
+        selectedCameraLiftTask = plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
+            if (!player.isOnline()
+                    || selectedPiece == null
+                    || !isCurrentTurnPlayer(player.getUniqueId())
+                    || boardManager.isActionRunning()) {
+                stopSelectedCameraLiftTask();
+                return;
+            }
+
+            updateSelectedPieceCameraLift(player);
+        }, 1L, 1L);
+    }
+
+    private void stopSelectedCameraLiftTask() {
+        if (selectedCameraLiftTask == null) {
+            return;
+        }
+
+        selectedCameraLiftTask.cancel();
+        selectedCameraLiftTask = null;
+    }
+
+    private void restoreSelectedCameraReturnLocation(Player player) {
+        Location returnLocation = selectedCameraReturnLocationMap.remove(player.getUniqueId());
+        if (returnLocation == null) {
+            return;
+        }
+
+        player.teleport(returnLocation);
+        player.setAllowFlight(true);
+        player.setFlying(true);
+    }
+
+    private void startLaunchCameraFollow(Player player, PieceData pieceData) {
+        stopLaunchCameraFollow();
+        player.setFlySpeed(0.0F);
+        launchCameraVehicle = spawnLaunchCameraVehicle(player.getLocation());
+        if (launchCameraVehicle != null) {
+            launchCameraVehicle.addPassenger(player);
+            player.setFlying(false);
+        }
+        launchCameraTask = plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
+            if (!player.isOnline()) {
+                stopLaunchCameraFollow();
+                return;
+            }
+
+            moveTurnCameraAboveLaunchedPiece(player, pieceData);
+        }, 1L, 1L);
+    }
+
+    private ArmorStand spawnLaunchCameraVehicle(Location location) {
+        if (location.getWorld() == null) {
+            return null;
+        }
+
+        return location.getWorld().spawn(location, ArmorStand.class, stand -> {
+            stand.setVisible(false);
+            stand.setGravity(false);
+            stand.setInvulnerable(true);
+            stand.setSilent(true);
+            stand.setSmall(true);
+            stand.setBasePlate(false);
+            stand.setArms(false);
+            stand.setCollidable(false);
+        });
+    }
+
+    private void moveTurnCameraAboveLaunchedPiece(Player player, PieceData pieceData) {
+        Location currentLocation = launchCameraVehicle != null && launchCameraVehicle.isValid()
+                ? launchCameraVehicle.getLocation()
+                : player.getLocation();
+        Location targetLocation = pieceData.getLocation().clone()
+                .add(0.0D, LAUNCH_CAMERA_Y_OFFSET + (pieceData.getPieceSize() * 0.12D), 0.0D);
+
+        Location nextLocation = targetLocation.clone();
+        nextLocation.setYaw(currentLocation.getYaw());
+        nextLocation.setPitch(currentLocation.getPitch());
+        if (launchCameraVehicle != null && launchCameraVehicle.isValid()) {
+            launchCameraVehicle.teleport(nextLocation);
+        } else {
+            player.teleport(nextLocation);
+        }
+        player.setAllowFlight(true);
+        player.setFlySpeed(0.0F);
+    }
+
+    private void stopLaunchCameraFollow() {
+        if (launchCameraTask == null) {
+            return;
+        }
+
+        launchCameraTask.cancel();
+        launchCameraTask = null;
+        launchCameraRotationGraceTicks.clear();
+        if (launchCameraVehicle != null) {
+            if (launchCameraVehicle.isValid()) {
+                launchCameraVehicle.eject();
+                launchCameraVehicle.remove();
+            }
+            launchCameraVehicle = null;
+        }
     }
 
     private Location resolveTurnCameraLocation(Player player) {

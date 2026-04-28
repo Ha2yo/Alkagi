@@ -20,10 +20,12 @@ import org.bukkit.event.inventory.PrepareItemCraftEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.RayTraceResult;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
@@ -31,6 +33,10 @@ import org.ha2yo.alkagi.game.GameState;
 import org.ha2yo.alkagi.game.PresetEditor;
 import org.ha2yo.alkagi.game.TeamType;
 import org.ha2yo.alkagi.game.model.PieceData;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * 알까기에서 플레이어 이벤트를 게임 로직과 연결한다.
@@ -41,9 +47,17 @@ public final class RemoteGameListener implements Listener {
     private static final double SELECTION_RAY_SIZE = 0.08D;
 
     private final GameManager gameManager;
+    private final Map<UUID, org.bukkit.Input> currentInputMap = new HashMap<>();
+    private final BukkitTask inputTask;
 
     public RemoteGameListener(GameManager gameManager) {
         this.gameManager = gameManager;
+        this.inputTask = gameManager.getPlugin().getServer().getScheduler().runTaskTimer(
+                gameManager.getPlugin(),
+                this::tickHeldInputs,
+                1L,
+                1L
+        );
     }
 
     @EventHandler
@@ -69,11 +83,13 @@ public final class RemoteGameListener implements Listener {
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
+        currentInputMap.remove(event.getPlayer().getUniqueId());
         gameManager.handleQuit(event.getPlayer().getUniqueId());
     }
 
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
+        gameManager.getSession().noteLaunchCameraRotation(event.getPlayer(), event.getFrom(), event.getTo());
         Location fixedLocation = gameManager.getSession().enforceTurnCameraY(event.getPlayer(), event.getTo());
         if (fixedLocation != null) {
             event.setTo(fixedLocation);
@@ -164,6 +180,23 @@ public final class RemoteGameListener implements Listener {
     }
 
     @EventHandler
+    public void onInput(PlayerInputEvent event) {
+        Player player = event.getPlayer();
+        GameSession session = gameManager.getSession();
+        if (!session.isUsingRemoteController(player)
+                || !session.isPlayingPhase()
+                || !session.isCurrentTurnPlayer(player.getUniqueId())
+                || session.getSelectedPiece() == null) {
+            currentInputMap.remove(player.getUniqueId());
+            return;
+        }
+
+        currentInputMap.put(player.getUniqueId(), event.getInput());
+        applyPowerInput(player, session, event.getInput(), 0.35F);
+        session.setSelectedPieceCameraLift(player, event.getInput().isJump());
+    }
+
+    @EventHandler
     public void onInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         GameSession session = gameManager.getSession();
@@ -209,13 +242,18 @@ public final class RemoteGameListener implements Listener {
 
         if (!session.isUsingRemoteController(player)
                 || !session.isPlayingPhase()
-                || !session.isCurrentTurnPlayer(player.getUniqueId())
-                || session.getSelectedPiece() != null) {
+                || !session.isCurrentTurnPlayer(player.getUniqueId())) {
             return;
         }
 
         if (!(event.getRightClicked() instanceof Interaction interaction)
                 || !gameManager.getBoardManager().isPieceSelectionEntity(interaction.getUniqueId())) {
+            return;
+        }
+
+        if (session.getSelectedPiece() != null) {
+            event.setCancelled(true);
+            handleLaunch(player, session);
             return;
         }
 
@@ -383,19 +421,52 @@ public final class RemoteGameListener implements Listener {
             return;
         }
 
-        Location target = resolveLaunchTarget(player);
-        if (target == null) {
-            event.setCancelled(true);
-            player.sendActionBar(Component.text("보드 쪽을 바라본 상태에서 우클릭해 주세요.", NamedTextColor.YELLOW));
-            return;
-        }
-
-        if (!session.launchSelectedPiece(player, target)) {
-            return;
-        }
-
         event.setCancelled(true);
+        handleLaunch(player, session);
+    }
+
+    private void handleLaunch(Player player, GameSession session) {
+        if (session.getFlatLaunchDirection(player).lengthSquared() <= 0.0001D) {
+            player.sendActionBar(Component.text("수평 방향을 볼 수 있게 시선을 조금 내려 주세요.", NamedTextColor.YELLOW));
+            return;
+        }
+
+        if (!session.launchSelectedPiece(player)) {
+            return;
+        }
+
         player.sendMessage(Component.text("말을 발사했습니다.", NamedTextColor.GREEN));
+    }
+
+    private void tickHeldInputs() {
+        GameSession session = gameManager.getSession();
+        currentInputMap.entrySet().removeIf(entry -> {
+            Player player = gameManager.getPlugin().getServer().getPlayer(entry.getKey());
+            if (player == null
+                    || !session.isUsingRemoteController(player)
+                    || !session.isPlayingPhase()
+                    || !session.isCurrentTurnPlayer(player.getUniqueId())
+                    || session.getSelectedPiece() == null) {
+                return true;
+            }
+
+            applyPowerInput(player, session, entry.getValue(), 0.2F);
+            session.setSelectedPieceCameraLift(player, entry.getValue().isJump());
+            return false;
+        });
+    }
+
+    private void applyPowerInput(Player player, GameSession session, org.bukkit.Input input, float soundVolume) {
+        boolean changed = false;
+        if (input.isForward() && !input.isBackward()) {
+            changed = session.increaseLaunchPower(player);
+        } else if (input.isBackward() && !input.isForward()) {
+            changed = session.decreaseLaunchPower(player);
+        }
+
+        if (changed) {
+            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, soundVolume, 1.6F);
+        }
     }
 
     private boolean containsRemoteController(ItemStack[] matrix) {
@@ -410,20 +481,13 @@ public final class RemoteGameListener implements Listener {
 
     private void sendSelectionReadyFeedback(Player player) {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
-        player.sendMessage(Component.text("마우스를 움직여 방향과 세기를 정한 다음 우클릭으로 발사하세요.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("시선 방향으로 조준하고 W/S로 세기를 조절한 뒤 우클릭으로 발사하세요.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("좌클릭으로 취소할 수 있으며, 스페이스바로 시선을 올릴 수 있습니다.", NamedTextColor.YELLOW));
     }
 
     private void sendSelectionCancelledFeedback(Player player) {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.7F, 0.85F);
         player.sendMessage(Component.text("말 선택을 취소했습니다.", NamedTextColor.YELLOW));
-    }
-
-    private Location resolveLaunchTarget(Player player) {
-        return gameManager.getArenaData().projectToBoardPlane(
-                player.getEyeLocation(),
-                player.getEyeLocation().getDirection(),
-                REMOTE_TRACE_DISTANCE
-        );
     }
 
     private PieceData selectPieceByRay(Player player, GameSession session) {
