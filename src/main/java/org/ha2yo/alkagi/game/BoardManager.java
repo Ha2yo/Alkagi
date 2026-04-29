@@ -53,24 +53,50 @@ public final class BoardManager {
     private static final double LEGACY_PIECE_CLEANUP_HORIZONTAL_MARGIN = 2.0D;
     private static final double LEGACY_PIECE_CLEANUP_VERTICAL_MARGIN = 6.0D;
 
+    // 말 모델의 실제 바닥 면적 비율이다. 충돌 반지름과 선택 히트박스 크기에 영향을 준다.
     private static final double DISPLAY_FOOTPRINT_SCALE = 0.57D;
+    private static final double SELECTION_FOOTPRINT_MULTIPLIER = 1.05D;
     private static final double LABEL_FOOTPRINT_SCALE = 3.3D;
     private static final float LABEL_BOLD_OFFSET = 0.018F;
     private static final float LABEL_DEPTH_OFFSET = 0.55F;
-    private static final double FRICTION = 0.86D;
-    private static final double ROLLING_RESISTANCE = 0.035D;
+
+    // FRICTION을 낮추거나 ROLLING_RESISTANCE를 높이면 말이 더 빨리 멈춘다.
+    private static final double FRICTION = 0.83D;
+    private static final double ROLLING_RESISTANCE = 0.045D;
+    // 이 속도보다 느리면 멈춘 것으로 처리한다.
     private static final double STOP_THRESHOLD = 0.05D;
+
+    // 플레이어가 조절할 수 있는 발사 세기 범위와 최종 발사 속도 배율이다.
     public static final double MIN_LAUNCH_POWER = 0.5D;
     public static final double MAX_LAUNCH_POWER = 10.0D;
-    private static final double LAUNCH_POWER_VELOCITY_SCALE = 2.4D;
+    private static final double LAUNCH_POWER_VELOCITY_SCALE = 1.8D;
+
+    // 기본 말 크기다. 크기 기반 무게와 발사 거리 보정은 이 값을 기준으로 계산된다.
     private static final double DEFAULT_PIECE_SIZE = 2.35D;
     private static final double DISPLAY_HEIGHT_SCALE_MULTIPLIER = 3.0D;
     private static final double PIECE_MODEL_MIN_Y = 0.5D;
     private static final double MODEL_UNIT_SIZE = 16.0D;
-    private static final double COLLISION_RESTITUTION = 1.0D;
+
+    // 값이 높을수록 말끼리 또는 장애물과 부딪혔을 때 더 많이 튕긴다.
+    private static final double COLLISION_RESTITUTION = 0.7D;
     private static final double OBSTACLE_RESTITUTION = 0.82D;
+
+    // 값을 낮추면 고속 충돌을 더 정확하게 잡지만 계산량이 늘어난다.
     private static final double MAX_SUBSTEP_DISTANCE = 0.18D;
     private static final int COLLISION_SOLVER_ITERATIONS = 3;
+
+    // 작은 말이 무거운 말에 부딪혔을 때 뒤로 튕기는 반동을 줄인다. 0이면 반동을 제거한다.
+    private static final double SMALL_TO_HEAVY_REBOUND_DAMPING = 0.0D;
+    // 무거운 말이 가벼운 말을 정타로 쳤을 때, 무거운 말의 전진 속도를 줄인다. 0이면 정면 충돌에서 멈춘다.
+    private static final double HEAVY_TO_LIGHT_FORWARD_DAMPING = 0.0D;
+
+    // 값이 높을수록 큰 말이 충돌에서 더 무겁게 작동한다.
+    private static final double COLLISION_MASS_EXPONENT = 2.0D;
+    private static final double MAX_COLLISION_MASS = 40.0D;
+
+    // 값이 높을수록 큰 말의 발사 속도가 줄어들어 이동 거리가 짧아진다.
+    private static final double LAUNCH_MASS_SPEED_EXPONENT = 0.35D;
+    private static final double MIN_LAUNCH_MASS_SPEED_MULTIPLIER = 0.55D;
 
     private final JavaPlugin plugin;
     private final ArenaData arenaData;
@@ -370,10 +396,9 @@ public final class BoardManager {
 
         double normalizedDistance = Math.min(direction.length() / getLaunchControlRadius(), 1.0D);
         double power = normalizedDistance * MAX_LAUNCH_POWER * LAUNCH_POWER_VELOCITY_SCALE;
+        double massSpeedMultiplier = getLaunchMassSpeedMultiplier(selectedPiece);
 
-        double sizePenalty = getLaunchSizePenalty(selectedPiece);
-
-        return direction.normalize().multiply(power * sizePenalty);
+        return direction.normalize().multiply(power * massSpeedMultiplier);
     }
 
     public Vector createLaunchVector(PieceData selectedPiece, Vector direction, double launchPower) {
@@ -384,18 +409,17 @@ public final class BoardManager {
         }
 
         double clampedPower = Math.max(MIN_LAUNCH_POWER, Math.min(MAX_LAUNCH_POWER, launchPower));
-        double sizePenalty = getLaunchSizePenalty(selectedPiece);
-        return flatDirection.normalize().multiply(clampedPower * LAUNCH_POWER_VELOCITY_SCALE * sizePenalty);
+        double massSpeedMultiplier = getLaunchMassSpeedMultiplier(selectedPiece);
+        return flatDirection.normalize().multiply(clampedPower * LAUNCH_POWER_VELOCITY_SCALE * massSpeedMultiplier);
     }
 
-    private double getLaunchSizePenalty(PieceData pieceData) {
+    private double getLaunchMassSpeedMultiplier(PieceData pieceData) {
         double sizeRatio = pieceData.getPieceSize() / DEFAULT_PIECE_SIZE;
-
         if (sizeRatio <= 1.0D) {
             return 1.0D;
         }
 
-        return Math.max(0.28D, 1.0D / Math.pow(sizeRatio, 1.15D));
+        return Math.max(MIN_LAUNCH_MASS_SPEED_MULTIPLIER, 1.0D / Math.pow(sizeRatio, LAUNCH_MASS_SPEED_EXPONENT));
     }
 
     private void configurePieceDisplay(ItemDisplay display, PieceData pieceData) {
@@ -655,8 +679,8 @@ public final class BoardManager {
         Vector firstTangentComponent = firstVelocity.clone().subtract(firstNormalComponent);
         Vector secondTangentComponent = secondVelocity.clone().subtract(secondNormalComponent);
 
-        Vector newFirstVelocity = firstTangentComponent.add(normal.clone().multiply(newFirstAlongNormal));
-        Vector newSecondVelocity = secondTangentComponent.add(normal.clone().multiply(newSecondAlongNormal));
+        Vector newFirstVelocity = firstTangentComponent.clone().add(normal.clone().multiply(newFirstAlongNormal));
+        Vector newSecondVelocity = secondTangentComponent.clone().add(normal.clone().multiply(newSecondAlongNormal));
 
         boolean firstHitsSecond = firstAlongNormal > 0.0D
                 && Math.abs(firstAlongNormal) >= Math.abs(secondAlongNormal);
@@ -665,24 +689,33 @@ public final class BoardManager {
                 && Math.abs(secondAlongNormal) > Math.abs(firstAlongNormal);
 
         if (firstHitsSecond && firstMass > secondMass) {
-            double penalty = getHeavyToLightImpactPenalty(firstMass, secondMass);
-            newSecondVelocity.multiply(penalty);
+            newFirstVelocity = firstTangentComponent.clone().add(normal.clone().multiply(
+                    newFirstAlongNormal * HEAVY_TO_LIGHT_FORWARD_DAMPING
+            ));
         }
 
         if (secondHitsFirst && secondMass > firstMass) {
-            double penalty = getHeavyToLightImpactPenalty(secondMass, firstMass);
-            newFirstVelocity.multiply(penalty);
+            newSecondVelocity = secondTangentComponent.clone().add(normal.clone().multiply(
+                    newSecondAlongNormal * HEAVY_TO_LIGHT_FORWARD_DAMPING
+            ));
+        }
+
+        if (firstHitsSecond && firstMass < secondMass && newFirstAlongNormal < 0.0D) {
+            newFirstVelocity = firstTangentComponent.clone().add(normal.clone().multiply(
+                    newFirstAlongNormal * SMALL_TO_HEAVY_REBOUND_DAMPING
+            ));
+        }
+
+        if (secondHitsFirst && secondMass < firstMass && newSecondAlongNormal > 0.0D) {
+            newSecondVelocity = secondTangentComponent.clone().add(normal.clone().multiply(
+                    newSecondAlongNormal * SMALL_TO_HEAVY_REBOUND_DAMPING
+            ));
         }
 
         updateVelocity(first, newFirstVelocity, velocities);
         updateVelocity(second, newSecondVelocity, velocities);
         playPieceCollisionSound(first.getLocation());
         return true;
-    }
-
-    private double getHeavyToLightImpactPenalty(double attackerMass, double targetMass) {
-        double massRatio = attackerMass / targetMass;
-        return Math.max(0.45D, 1.0D / Math.pow(massRatio, 0.25D));
     }
 
     private void movePieces(Map<PieceData, Vector> velocities, double scale) {
@@ -970,7 +1003,7 @@ public final class BoardManager {
     }
 
     private double getSelectionDiameter(double pieceSize) {
-        return Math.max(0.28D, pieceSize * DISPLAY_FOOTPRINT_SCALE * 0.82D);
+        return Math.max(0.35D, pieceSize * DISPLAY_FOOTPRINT_SCALE * SELECTION_FOOTPRINT_MULTIPLIER);
     }
 
     private double getSelectionHeight(PieceData pieceData) {
@@ -978,12 +1011,12 @@ public final class BoardManager {
     }
 
     private double getSelectionHeight(double pieceSize) {
-        return Math.max(0.72D, pieceSize * 0.95D);
+        return Math.max(0.18D, pieceSize * 0.12D);
     }
 
     private double getCollisionMass(PieceData pieceData) {
         double normalizedSize = pieceData.getPieceSize() / DEFAULT_PIECE_SIZE;
-        return Math.max(0.02D, Math.min(40.0D, Math.pow(normalizedSize, 2.0D)));
+        return Math.max(0.02D, Math.min(MAX_COLLISION_MASS, Math.pow(normalizedSize, COLLISION_MASS_EXPONENT)));
     }
 
     private void cancelPhysicsTask() {

@@ -74,6 +74,12 @@ public final class GameSession {
     private static final float TURN_CAMERA_FLY_SPEED = 0.6F;
     private static final long NEXT_TURN_DELAY_TICKS = 20L;
     private static final long GAME_END_DELAY_TICKS = 20L;
+    private static final Duration RESULT_TITLE_FADE_IN = Duration.ofMillis(300);
+    private static final Duration RESULT_TITLE_STAY = Duration.ofSeconds(3);
+    private static final Duration RESULT_TITLE_FADE_OUT = Duration.ofMillis(500);
+    private static final long RESULT_DISPLAY_TICKS = durationToTicks(
+        RESULT_TITLE_FADE_IN.plus(RESULT_TITLE_STAY).plus(RESULT_TITLE_FADE_OUT)
+    );
     private static final double SELECTED_PIECE_CAMERA_Y_OFFSET = 1.15D;
     private static final double SELECTED_PIECE_CAMERA_JUMP_Y_OFFSET = 5.0D;
     private static final double SELECTED_PIECE_CAMERA_LIFT_VELOCITY_SCALE = 0.28D;
@@ -87,7 +93,7 @@ public final class GameSession {
     private static final double PIECE_MODEL_MAX_Y = 2.5D;
     private static final double MODEL_UNIT_SIZE = 16.0D;
     private static final double DEFAULT_LAUNCH_POWER = 5.0D;
-    private static final double LAUNCH_POWER_STEP = 0.42D;
+    private static final double LAUNCH_POWER_STEP = 0.44D;
     private static final float SELECTED_PIECE_CAMERA_PITCH = 30.0F;
 
     private static final PotionEffect TURN_SPEED_EFFECT =
@@ -126,6 +132,7 @@ public final class GameSession {
     private int configuredPieceCount;
     private PieceData selectedPiece;
     private UUID lastSelectedPlayerId;
+    private UUID selectionReadyFeedbackPlayerId;
     private long lastSelectedAtMillis;
     private int remainingTurnSeconds;
     private BukkitTask turnTimerTask;
@@ -293,6 +300,7 @@ public final class GameSession {
         configuredPieceCount = 0;
         selectedPiece = null;
         lastSelectedPlayerId = null;
+        selectionReadyFeedbackPlayerId = null;
         lastSelectedAtMillis = 0L;
         launchPowerMap.clear();
         selectedCameraReturnLocationMap.clear();
@@ -325,6 +333,7 @@ public final class GameSession {
 
         refreshAllPlayerFormatting();
         for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
+            removeRemoteControllerItems(onlinePlayer);
             clearSpectatorState(onlinePlayer);
             sendToLobby(onlinePlayer);
         }
@@ -456,6 +465,7 @@ public final class GameSession {
         }
 
         currentTurnPlayer = next;
+        selectionReadyFeedbackPlayerId = null;
         launchPowerMap.put(next, DEFAULT_LAUNCH_POWER);
         scoreboardManager.updateGameBoard(this);
         refreshTurnIndicators();
@@ -486,6 +496,7 @@ public final class GameSession {
         currentTeamData.pushBackPlayer(currentTurnPlayer);
         currentTurnPlayer = null;
         selectedPiece = null;
+        selectionReadyFeedbackPlayerId = null;
         launchPowerMap.remove(finishedTurnPlayer);
         selectedCameraReturnLocationMap.remove(finishedTurnPlayer);
         launchCameraRotationGraceTicks.remove(finishedTurnPlayer);
@@ -537,12 +548,10 @@ public final class GameSession {
         stopSelectedCameraLiftTask();
         gameState = GameState.ENDING;
         restoreAllTurnCameras();
-        clearAllPlayerInventories();
-        sendAllOnlinePlayersToLobby();
         scoreboardManager.showResult(this, winner);
         broadcastWinnerTitle(winner);
         broadcastKillRanking();
-        resetAfterDelay();
+        resetAfterDelay(RESULT_DISPLAY_TICKS);
     }
 
     /**
@@ -593,6 +602,7 @@ public final class GameSession {
             currentTurnPlayer = null;
             selectedPiece = null;
             lastSelectedPlayerId = null;
+            selectionReadyFeedbackPlayerId = null;
             lastSelectedAtMillis = 0L;
             selectedCameraReturnLocationMap.remove(playerId);
             launchCameraRotationGraceTicks.remove(playerId);
@@ -683,6 +693,21 @@ public final class GameSession {
     public boolean isCurrentTurnPlayer(
             UUID playerId) {
         return currentTurnPlayer != null && currentTurnPlayer.equals(playerId);
+    }
+
+    public boolean consumeSelectionReadyFeedback(
+            Player player
+    ) {
+        UUID playerId = player.getUniqueId();
+        if (!isCurrentTurnPlayer(playerId)) {
+            return false;
+        }
+        if (playerId.equals(selectionReadyFeedbackPlayerId)) {
+            return false;
+        }
+
+        selectionReadyFeedbackPlayerId = playerId;
+        return true;
     }
 
     public boolean isPlacementPhase() {
@@ -904,6 +929,10 @@ public final class GameSession {
             return null;
         }
 
+        return selectPieceData(player, pieceData);
+    }
+
+    private PieceData selectPieceData(Player player, PieceData pieceData) {
         selectedCameraReturnLocationMap.put(player.getUniqueId(), player.getLocation().clone());
         selectedPiece = pieceData;
         lastSelectedPlayerId = player.getUniqueId();
@@ -1029,11 +1058,19 @@ public final class GameSession {
     }
 
     public boolean increaseLaunchPower(Player player) {
-        return adjustLaunchPower(player, LAUNCH_POWER_STEP);
+        return increaseLaunchPower(player, 1.0D);
+    }
+
+    public boolean increaseLaunchPower(Player player, double multiplier) {
+        return adjustLaunchPower(player, LAUNCH_POWER_STEP * multiplier);
     }
 
     public boolean decreaseLaunchPower(Player player) {
-        return adjustLaunchPower(player, -LAUNCH_POWER_STEP);
+        return decreaseLaunchPower(player, 1.0D);
+    }
+
+    public boolean decreaseLaunchPower(Player player, double multiplier) {
+        return adjustLaunchPower(player, -LAUNCH_POWER_STEP * multiplier);
     }
 
     public double getLaunchPower(UUID playerId) {
@@ -1285,6 +1322,14 @@ public final class GameSession {
         reset();
     }
 
+    private void resetAfterDelay(long delayTicks) {
+        plugin.getServer().getScheduler().runTaskLater(plugin, this::reset, Math.max(0L, delayTicks));
+    }
+
+    private static long durationToTicks(Duration duration) {
+        return Math.max(1L, (long) Math.ceil(duration.toMillis() / 50.0D));
+    }
+
     private void decideOpeningTeam() {
         TeamType finalTeam = Math.random() < 0.5D ? TeamType.BLUE : TeamType.RED;
         TeamType previewTeam = finalTeam.opposite();
@@ -1351,13 +1396,13 @@ public final class GameSession {
             title = Title.title(
                 Component.text("무승부입니다!", NamedTextColor.YELLOW),
                 subtitle,
-                Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(3), Duration.ofMillis(500))
+                Title.Times.times(RESULT_TITLE_FADE_IN, RESULT_TITLE_STAY, RESULT_TITLE_FADE_OUT)
             );
         } else {
             title = Title.title(
                 Component.text(winner.getDisplayName() + " 승리!", winner.getColor()),
                 subtitle,
-                Title.Times.times(Duration.ofMillis(300), Duration.ofSeconds(3), Duration.ofMillis(500))
+                Title.Times.times(RESULT_TITLE_FADE_IN, RESULT_TITLE_STAY, RESULT_TITLE_FADE_OUT)
             );
         }
 
@@ -1584,7 +1629,9 @@ public final class GameSession {
         if (gameMusicQueue.isEmpty()) {
             return getGameMusicSoundKey();
         }
-        return gameMusicQueue.remove(0);
+        String soundKey = gameMusicQueue.remove(0);
+        gameMusicQueue.add(soundKey);
+        return soundKey;
     }
 
     private void refillGameMusicQueue() {
@@ -1890,11 +1937,28 @@ public final class GameSession {
         if (heldSlot != null) {
             player.getInventory().setHeldItemSlot(heldSlot);
         }
+        removeRemoteControllerItems(player);
         enforceTeamArmor(player);
         if (playerTeamMap.get(player.getUniqueId()) == null && gameState != GameState.WAITING) {
             applySpectatorState(player);
         } else {
             clearSpectatorState(player);
+        }
+    }
+
+    private void removeRemoteControllerItems(Player player) {
+        ItemStack[] contents = player.getInventory().getContents();
+        boolean changed = false;
+        for (int i = 0; i < contents.length; i++) {
+            if (!isRemoteController(contents[i])) {
+                continue;
+            }
+            contents[i] = null;
+            changed = true;
+        }
+        if (changed) {
+            player.getInventory().setContents(contents);
+            player.updateInventory();
         }
     }
 

@@ -45,6 +45,7 @@ public final class RemoteGameListener implements Listener {
 
     private static final double REMOTE_TRACE_DISTANCE = 256.0D;
     private static final double SELECTION_RAY_SIZE = 0.08D;
+    private static final double FINE_AIM_POWER_MULTIPLIER = 0.03D;
 
     private final GameManager gameManager;
     private final Map<UUID, org.bukkit.Input> currentInputMap = new HashMap<>();
@@ -263,7 +264,9 @@ public final class RemoteGameListener implements Listener {
         }
 
         event.setCancelled(true);
-        sendSelectionReadyFeedback(player);
+        if (session.consumeSelectionReadyFeedback(player)) {
+            sendSelectionReadyFeedback(player);
+        }
     }
 
     @EventHandler
@@ -417,7 +420,9 @@ public final class RemoteGameListener implements Listener {
             }
 
             event.setCancelled(true);
-            sendSelectionReadyFeedback(player);
+            if (session.consumeSelectionReadyFeedback(player)) {
+                sendSelectionReadyFeedback(player);
+            }
             return;
         }
 
@@ -458,10 +463,11 @@ public final class RemoteGameListener implements Listener {
 
     private void applyPowerInput(Player player, GameSession session, org.bukkit.Input input, float soundVolume) {
         boolean changed = false;
+        double powerMultiplier = input.isSneak() ? FINE_AIM_POWER_MULTIPLIER : 1.0D;
         if (input.isForward() && !input.isBackward()) {
-            changed = session.increaseLaunchPower(player);
+            changed = session.increaseLaunchPower(player, powerMultiplier);
         } else if (input.isBackward() && !input.isForward()) {
-            changed = session.decreaseLaunchPower(player);
+            changed = session.decreaseLaunchPower(player, powerMultiplier);
         }
 
         if (changed) {
@@ -483,6 +489,7 @@ public final class RemoteGameListener implements Listener {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
         player.sendMessage(Component.text("시선 방향으로 조준하고 W/S로 세기를 조절한 뒤 우클릭으로 발사하세요.", NamedTextColor.YELLOW));
         player.sendMessage(Component.text("좌클릭으로 취소할 수 있으며, 스페이스바로 시선을 올릴 수 있습니다.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("쉬프트를 누르면 세기 미세조절이 가능합니다.", NamedTextColor.YELLOW));
     }
 
     private void sendSelectionCancelledFeedback(Player player) {
