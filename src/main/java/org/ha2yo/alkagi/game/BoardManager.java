@@ -50,6 +50,8 @@ public final class BoardManager {
     private static final NamespacedKey BLUE_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/white");
     private static final NamespacedKey RED_PIECE_ITEM_MODEL = NamespacedKey.minecraft("alkagi_mal/white");
     private static final String PIECE_ENTITY_MARKER = "piece";
+    private static final double LEGACY_PIECE_CLEANUP_HORIZONTAL_MARGIN = 2.0D;
+    private static final double LEGACY_PIECE_CLEANUP_VERTICAL_MARGIN = 6.0D;
 
     private static final double DISPLAY_FOOTPRINT_SCALE = 0.57D;
     private static final double LABEL_FOOTPRINT_SCALE = 3.3D;
@@ -478,11 +480,18 @@ public final class BoardManager {
     }
 
     private boolean isLegacyPieceEntity(Entity entity) {
-        if (!isNearBoard(entity.getLocation(), 2.0D, 3.0D)) {
+        if (!isNearBoard(
+                entity.getLocation(),
+                LEGACY_PIECE_CLEANUP_HORIZONTAL_MARGIN,
+                LEGACY_PIECE_CLEANUP_VERTICAL_MARGIN
+        )) {
             return false;
         }
         if (entity instanceof ItemDisplay display) {
             return isPieceDisplayItem(display.getItemStack());
+        }
+        if (entity instanceof TextDisplay) {
+            return true;
         }
         if (entity instanceof ArmorStand armorStand) {
             return armorStand.isInvisible()

@@ -23,13 +23,13 @@ music:
       duration-seconds: 202
     - sound-key: "alkagi.ingame_3"
       title: "Green Onion - Booker T. & The M.G's"
-      duration-seconds: 175
+      duration-seconds: 170
     - sound-key: "alkagi.ingame_4"
       title: "Baby Elephant Walk - Henry Mancini"
-      duration-seconds: 162
+      duration-seconds: 160
     - sound-key: "alkagi.ingame_5"
       title: "Lullaby of Birdland - George Shearing Quintet"
-      duration-seconds: 163
+      duration-seconds: 162
   titles:
     "alkagi.ingame_1": "Unsquare Dance - Dave Brubeck"
     "alkagi.ingame_2": "C Jam Blues - Oscar Peterson"
