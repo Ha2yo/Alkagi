@@ -16,6 +16,7 @@ public final class AlkagiPlugin extends JavaPlugin {
 
     private GameManager gameManager;
     private GuideRenderer guideRenderer;
+    private RemoteGameListener remoteGameListener;
 
     @Override
     public void onEnable() {
@@ -26,6 +27,7 @@ public final class AlkagiPlugin extends JavaPlugin {
         this.gameManager = new GameManager(this, arenaData, scoreboardManager);
         // 이전 실행에서 남은 말 엔티티를 정리한다.
         gameManager.getBoardManager().cleanupTaggedPieceEntities();
+        gameManager.getBoardManager().refreshBoardGridLines();
 
         AlkagiCommand alkagiCommand = new AlkagiCommand(gameManager);
         PluginCommand command = getCommand("alkagi");
@@ -42,11 +44,15 @@ public final class AlkagiPlugin extends JavaPlugin {
         this.guideRenderer = new GuideRenderer(this, gameManager);
         // 조준 및 배치 가이드 렌더링을 시작한다.
         guideRenderer.start();
-        getServer().getPluginManager().registerEvents(new RemoteGameListener(gameManager), this);
+        this.remoteGameListener = new RemoteGameListener(gameManager);
+        getServer().getPluginManager().registerEvents(remoteGameListener, this);
     }
 
     @Override
     public void onDisable() {
+        if (remoteGameListener != null) {
+            remoteGameListener.shutdown();
+        }
         if (gameManager != null) {
             gameManager.shutdown();
             gameManager.getBoardManager().cleanupTaggedPieceEntities();

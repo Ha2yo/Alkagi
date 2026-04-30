@@ -32,7 +32,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         "kick", "preset"
     );
     private static final List<String> PRESET_SUBCOMMANDS = List.of(
-        "list", "edit", "team", "label", "relabel", "resize", "height", "save", "clear", "cancel", "delete"
+        "list", "edit", "team", "label", "relabel", "resize", "height", "snap", "save", "clear", "cancel", "delete"
     );
     private static final List<String> PRESET_LABEL_SUGGESTIONS = List.of(
         "楚", "士", "车", "包", "马", "象", "卒",
@@ -441,6 +441,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             case "relabel" -> handlePresetRelabel(sender, args);
             case "resize" -> handlePresetResize(sender, args);
             case "height" -> handlePresetHeight(sender, args);
+            case "snap" -> handlePresetSnap(sender, args);
             case "save" -> handlePresetSave(sender);
             case "clear" -> handlePresetClear(sender);
             case "cancel" -> handlePresetCancel(sender);
@@ -489,7 +490,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
         }
 
         sender.sendMessage(Component.text("프리셋 편집을 시작했습니다: " + args[2], NamedTextColor.GREEN));
-        sender.sendMessage(Component.text("블레이즈 막대를 들고 우클릭하면 현재 팀 말이 배치되고, 좌클릭하면 마지막 말이 삭제됩니다.", NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text("블레이즈 막대를 들고 우클릭하면 현재 팀 말이 배치되고, 좌클릭하면 바라보는 말을 삭제합니다.", NamedTextColor.YELLOW));
         sender.sendMessage(Component.text(
             "현재 팀: " + gameManager.getPresetEditor().getSelectedTeam().getDisplayName()
                 + " / 글자: " + gameManager.getPresetEditor().getLabelText(),
@@ -568,15 +569,10 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        boolean updated = presetEditor.relabelLastPlacedPiece(joinArgs(args, 2));
-        if (!updated) {
-            sender.sendMessage(Component.text("현재 선택된 팀에 수정할 말이 없습니다.", NamedTextColor.RED));
-            return true;
-        }
-
+        presetEditor.setLabelText(joinArgs(args, 2));
         sender.sendMessage(Component.text(
-            "마지막으로 배치한 " + presetEditor.getSelectedTeam().getDisplayName()
-                + " 말 글자를 " + presetEditor.getLabelText() + " 로 변경했습니다.",
+            "프리셋 말 글자를 " + presetEditor.getLabelText()
+                + " 로 지정했습니다. 블레이즈 막대로 말을 우클릭하면 해당 말에 적용됩니다.",
             presetEditor.getSelectedTeam().getColor()
         ));
         return true;
@@ -589,25 +585,20 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (args.length < 3) {
-            sender.sendMessage(Component.text("/alkagi preset resize <배율>", NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text("/alkagi preset resize <크기>", NamedTextColor.YELLOW));
             return true;
         }
 
-        double scale = parseDouble(args[2], -1.0D);
-        if (scale <= 0.0D) {
-            sender.sendMessage(Component.text("배율은 0보다 큰 숫자여야 합니다.", NamedTextColor.RED));
+        double size = parseDouble(args[2], -1.0D);
+        if (size <= 0.0D) {
+            sender.sendMessage(Component.text("크기는 0보다 큰 숫자여야 합니다.", NamedTextColor.RED));
             return true;
         }
 
-        int resizedCount = presetEditor.resizeCurrentPieces(scale);
-        if (resizedCount < 0) {
-            sender.sendMessage(Component.text("프리셋 편집 중에만 크기를 조절할 수 있습니다.", NamedTextColor.RED));
-            return true;
-        }
-
+        presetEditor.setResizeTargetSize(size);
         sender.sendMessage(Component.text(
-            "현재 프리셋 돌 " + resizedCount + "개의 크기를 "
-                + String.format("%.2f", scale) + "배로 조절했습니다.",
+            "프리셋 크기 적용 모드: " + String.format("%.2f", presetEditor.getPieceSize())
+                + ". 블레이즈 막대로 바꿀 말을 우클릭하세요.",
             NamedTextColor.GREEN
         ));
         return true;
@@ -642,6 +633,38 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
             NamedTextColor.GREEN
         ));
         return true;
+    }
+
+    private boolean handlePresetSnap(CommandSender sender, String[] args) {
+        PresetEditor presetEditor = gameManager.getPresetEditor();
+        if (!presetEditor.isEditing()) {
+            sender.sendMessage(Component.text("먼저 /alkagi preset edit <이름> 으로 편집을 시작해 주세요.", NamedTextColor.RED));
+            return true;
+        }
+        if (args.length < 3) {
+            sender.sendMessage(Component.text(
+                "/alkagi preset snap <free|grid> (현재: " + (presetEditor.isSnapToGrid() ? "grid" : "free") + ")",
+                NamedTextColor.YELLOW
+            ));
+            return true;
+        }
+
+        return switch (args[2].toLowerCase()) {
+            case "free", "off", "false" -> {
+                presetEditor.setSnapToGrid(false);
+                sender.sendMessage(Component.text("프리셋 배치 스냅: 자유 배치", NamedTextColor.GREEN));
+                yield true;
+            }
+            case "grid", "on", "true" -> {
+                presetEditor.setSnapToGrid(true);
+                sender.sendMessage(Component.text("프리셋 배치 스냅: 격자 교차점", NamedTextColor.GREEN));
+                yield true;
+            }
+            default -> {
+                sender.sendMessage(Component.text("/alkagi preset snap <free|grid>", NamedTextColor.YELLOW));
+                yield true;
+            }
+        };
     }
 
     private boolean handlePresetSave(CommandSender sender) {
@@ -838,6 +861,7 @@ public final class AlkagiCommand implements CommandExecutor, TabCompleter {
                 case "label", "relabel" -> PRESET_LABEL_SUGGESTIONS;
                 case "resize" -> List.of("0.8", "0.9", "1.1", "1.2", "1.5");
                 case "height" -> List.of("0.5", "0.75", "1.0", "1.25", "1.5");
+                case "snap" -> List.of("free", "grid");
                 default -> new ArrayList<>();
             };
         }

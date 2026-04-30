@@ -944,33 +944,6 @@ public final class GameSession {
     }
 
     /**
-     * 현재 선택된 말을 취소하고 다시 선택 대기 상태로 돌린다.
-     */
-    public boolean cancelSelectedPiece(
-            Player player
-    ) {
-        if (gameState != GameState.PLAYING || !isCurrentTurnPlayer(player.getUniqueId()) || selectedPiece == null || boardManager.isActionRunning()) {
-            return false;
-        }
-
-        TeamType teamType = playerTeamMap.get(player.getUniqueId());
-        if (teamType == null || selectedPiece.getTeamType() != teamType) {
-            return false;
-        }
-
-        selectedPiece = null;
-        lastSelectedPlayerId = null;
-        lastSelectedAtMillis = 0L;
-        stopSelectedCameraLiftTask();
-        selectedCameraLiftedMap.remove(player.getUniqueId());
-        launchPowerMap.put(player.getUniqueId(), DEFAULT_LAUNCH_POWER);
-        restoreSelectedCameraReturnLocation(player);
-        removeTurnCameraInvisibility(player);
-        player.setFlySpeed(TURN_CAMERA_FLY_SPEED);
-        return true;
-    }
-
-    /**
      * 선택된 말을 목표 지점을 향해 발사하고 물리 처리 종료 후 턴을 넘긴다.
      */
     public boolean launchSelectedPiece(

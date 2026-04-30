@@ -16,6 +16,10 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class PresetEditor {
+    public enum PieceEditMode {
+        LABEL,
+        RESIZE
+    }
 
     private final JavaPlugin plugin;
     private final ArenaData arenaData;
@@ -30,6 +34,8 @@ public final class PresetEditor {
     private double pieceHeightScale = 1.0D;
     private double previousPieceSize;
     private String labelText = getDefaultLabelText(TeamType.BLUE);
+    private boolean snapToGrid;
+    private PieceEditMode pieceEditMode = PieceEditMode.LABEL;
 
     public PresetEditor(JavaPlugin plugin, ArenaData arenaData, BoardManager boardManager, PresetRepository presetRepository) {
         this.plugin = plugin;
@@ -81,6 +87,8 @@ public final class PresetEditor {
         this.selectedTeam = TeamType.BLUE;
         this.labelText = getDefaultLabelText(selectedTeam);
         this.previousPieceSize = arenaData.getPieceSize();
+        this.snapToGrid = false;
+        this.pieceEditMode = PieceEditMode.LABEL;
 
         PresetData presetData = presetRepository.loadPreset(presetName);
         this.pieceSize = arenaData.getPieceSize();
@@ -111,6 +119,11 @@ public final class PresetEditor {
         this.pieceSize = Math.max(0.5D, pieceSize);
     }
 
+    public void setResizeTargetSize(double pieceSize) {
+        setPieceSize(pieceSize);
+        this.pieceEditMode = PieceEditMode.RESIZE;
+    }
+
     public void setPieceHeightScale(double pieceHeightScale) {
         this.pieceHeightScale = Math.max(0.1D, pieceHeightScale);
     }
@@ -122,6 +135,19 @@ public final class PresetEditor {
     public void setLabelText(String labelText) {
         String trimmed = labelText.trim();
         this.labelText = trimmed.isEmpty() ? getDefaultLabelText(selectedTeam) : trimmed;
+        this.pieceEditMode = PieceEditMode.LABEL;
+    }
+
+    public PieceEditMode getPieceEditMode() {
+        return pieceEditMode;
+    }
+
+    public boolean isSnapToGrid() {
+        return snapToGrid;
+    }
+
+    public void setSnapToGrid(boolean snapToGrid) {
+        this.snapToGrid = snapToGrid;
     }
 
     public boolean placePiece(Player player, Location clickedLocation) {
@@ -134,8 +160,12 @@ public final class PresetEditor {
         if (base != null) {
             spawnLocation.setY(base.getY());
         }
-        spawnLocation.setX(Math.floor(spawnLocation.getX()) + 0.5D);
-        spawnLocation.setZ(Math.floor(spawnLocation.getZ()) + 0.5D);
+        if (snapToGrid) {
+            snapPlacementLocationToNearestGridIntersection(spawnLocation);
+        } else {
+            spawnLocation.setX(Math.floor(spawnLocation.getX()) + 0.5D);
+            spawnLocation.setZ(Math.floor(spawnLocation.getZ()) + 0.5D);
+        }
 
         if (!boardManager.canPlacePiece(spawnLocation, pieceSize, teamDataMap)) {
             return false;
@@ -170,19 +200,17 @@ public final class PresetEditor {
         return true;
     }
 
-    public boolean relabelLastPlacedPiece(String labelText) {
-        if (!isEditing()) {
+    public boolean removePiece(Player player, PieceData pieceData) {
+        if (!isEditing(player.getUniqueId()) || !ownsPiece(pieceData)) {
             return false;
         }
 
-        List<PieceData> pieces = teamDataMap.get(selectedTeam).getPieces();
-        if (pieces.isEmpty()) {
+        TeamData teamData = teamDataMap.get(pieceData.getTeamType());
+        if (teamData == null || !teamData.getPieces().remove(pieceData)) {
             return false;
         }
 
-        PieceData pieceData = pieces.get(pieces.size() - 1);
-        boardManager.updatePieceLabel(pieceData, labelText);
-        this.labelText = pieceData.getLabelText();
+        boardManager.removePiece(pieceData);
         return true;
     }
 
@@ -192,6 +220,43 @@ public final class PresetEditor {
         }
 
         boardManager.updatePieceLabel(pieceData, labelText);
+        return true;
+    }
+
+    public boolean resizePiece(PieceData pieceData) {
+        if (!isEditing() || !ownsPiece(pieceData)) {
+            return false;
+        }
+
+        TeamData teamData = teamDataMap.get(pieceData.getTeamType());
+        if (teamData == null) {
+            return false;
+        }
+
+        List<PieceData> pieces = teamData.getPieces();
+        int index = pieces.indexOf(pieceData);
+        if (index < 0) {
+            return false;
+        }
+
+        TeamType teamType = pieceData.getTeamType();
+        int pieceId = pieceData.getPieceId();
+        Location location = pieceData.getLocation();
+        double heightScale = pieceData.getHeightScale();
+        String labelText = pieceData.getLabelText();
+
+        pieces.remove(index);
+        boardManager.removePiece(pieceData);
+
+        PieceData resizedPiece = boardManager.spawnPiece(
+            teamType,
+            pieceId,
+            location,
+            pieceSize,
+            heightScale,
+            labelText
+        );
+        pieces.add(index, resizedPiece);
         return true;
     }
 
@@ -316,6 +381,57 @@ public final class PresetEditor {
         selectedTeam = TeamType.BLUE;
         labelText = getDefaultLabelText(selectedTeam);
         pieceHeightScale = 1.0D;
+        snapToGrid = false;
+        pieceEditMode = PieceEditMode.LABEL;
+    }
+
+    private void snapPlacementLocationToNearestGridIntersection(Location location) {
+        Location pos1 = arenaData.getBoardPos1();
+        Location pos2 = arenaData.getBoardPos2();
+        if (pos1 == null || pos2 == null || location.getWorld() == null || pos1.getWorld() == null || pos2.getWorld() == null
+                || !location.getWorld().getUID().equals(pos1.getWorld().getUID())
+                || !location.getWorld().getUID().equals(pos2.getWorld().getUID())) {
+            location.setX(Math.floor(location.getX()) + 0.5D);
+            location.setZ(Math.floor(location.getZ()) + 0.5D);
+            return;
+        }
+
+        double minX = Math.min(pos1.getX(), pos2.getX());
+        double maxX = Math.max(pos1.getX(), pos2.getX());
+        double minZ = Math.min(pos1.getZ(), pos2.getZ());
+        double maxZ = Math.max(pos1.getZ(), pos2.getZ());
+        double boardWidth = maxX - minX;
+        double boardHeight = maxZ - minZ;
+        if (boardWidth <= 0.0D || boardHeight <= 0.0D) {
+            location.setX(Math.floor(location.getX()) + 0.5D);
+            location.setZ(Math.floor(location.getZ()) + 0.5D);
+            return;
+        }
+
+        double gridInset = Math.min(boardWidth, boardHeight) * BoardManager.BOARD_GRID_INSET_RATIO;
+        double gridMinX = minX + gridInset;
+        double gridMaxX = maxX - gridInset;
+        double gridMinZ = minZ + gridInset;
+        double gridMaxZ = maxZ - gridInset;
+
+        if (boardWidth >= boardHeight) {
+            location.setX(snapToGridCoordinate(location.getX(), gridMinX, gridMaxX, BoardManager.JANGGI_BOARD_ROWS));
+            location.setZ(snapToGridCoordinate(location.getZ(), gridMinZ, gridMaxZ, BoardManager.JANGGI_BOARD_COLUMNS));
+        } else {
+            location.setX(snapToGridCoordinate(location.getX(), gridMinX, gridMaxX, BoardManager.JANGGI_BOARD_COLUMNS));
+            location.setZ(snapToGridCoordinate(location.getZ(), gridMinZ, gridMaxZ, BoardManager.JANGGI_BOARD_ROWS));
+        }
+    }
+
+    private double snapToGridCoordinate(double coordinate, double min, double max, int pointCount) {
+        if (pointCount <= 1 || max <= min) {
+            return min;
+        }
+
+        double step = (max - min) / (pointCount - 1);
+        int index = (int) Math.round((coordinate - min) / step);
+        index = Math.max(0, Math.min(pointCount - 1, index));
+        return min + (step * index);
     }
 
     private void loadPresetPreview(PresetData presetData) {

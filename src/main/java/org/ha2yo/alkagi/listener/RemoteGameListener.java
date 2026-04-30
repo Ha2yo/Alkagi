@@ -12,7 +12,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -59,6 +58,11 @@ public final class RemoteGameListener implements Listener {
                 1L,
                 1L
         );
+    }
+
+    public void shutdown() {
+        inputTask.cancel();
+        currentInputMap.clear();
     }
 
     @EventHandler
@@ -208,11 +212,6 @@ public final class RemoteGameListener implements Listener {
             return;
         }
 
-        if (event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK) {
-            handleLeftClickInteract(event, player, session);
-            return;
-        }
-
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK && event.getAction() != Action.RIGHT_CLICK_AIR) {
             return;
         }
@@ -269,43 +268,16 @@ public final class RemoteGameListener implements Listener {
         }
     }
 
-    @EventHandler
-    public void onDamageEntity(EntityDamageByEntityEvent event) {
-        if (!(event.getDamager() instanceof Player player)) {
-            return;
-        }
-        if (!(event.getEntity() instanceof Interaction interaction)) {
-            return;
-        }
-
-        GameSession session = gameManager.getSession();
-        if (!session.isUsingRemoteController(player)
-                || !session.isPlayingPhase()
-                || !session.isCurrentTurnPlayer(player.getUniqueId())
-                || session.getSelectedPiece() == null
-                || !gameManager.getBoardManager().isPieceSelectionEntity(interaction.getUniqueId())) {
-            return;
-        }
-
-        if (!session.cancelSelectedPiece(player)) {
-            return;
-        }
-
-        event.setCancelled(true);
-        sendSelectionCancelledFeedback(player);
-    }
-
     private void handlePresetEditInteract(PlayerInteractEvent event, Player player, PresetEditor presetEditor) {
         if (event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK) {
-            if (!presetEditor.removeLastPlacedPiece(player)) {
+            PieceData pieceData = tracePresetPiece(player, presetEditor);
+            if (pieceData == null || !presetEditor.removePiece(player, pieceData)) {
                 return;
             }
 
             event.setCancelled(true);
             player.sendMessage(Component.text(
-                    presetEditor.getSelectedTeam().getDisplayName() + " 마지막 돌을 제거했습니다. "
-                            + presetEditor.getSelectedTeam().getDisplayName() + " 돌 수: "
-                            + presetEditor.getPlacedCount(presetEditor.getSelectedTeam()),
+                    pieceData.getTeamType().getDisplayName() + " 돌 삭제",
                     NamedTextColor.YELLOW
             ));
             return;
@@ -346,35 +318,33 @@ public final class RemoteGameListener implements Listener {
         }
 
         PieceData pieceData = gameManager.getBoardManager().findPieceByEntity(interaction.getUniqueId());
-        if (pieceData == null || !presetEditor.relabelPiece(pieceData)) {
+        if (pieceData == null) {
+            return;
+        }
+
+        boolean updated;
+        if (presetEditor.getPieceEditMode() == PresetEditor.PieceEditMode.RESIZE) {
+            updated = presetEditor.resizePiece(pieceData);
+        } else {
+            updated = presetEditor.relabelPiece(pieceData);
+        }
+        if (!updated) {
             return;
         }
 
         event.setCancelled(true);
-        player.sendMessage(Component.text(
-                pieceData.getTeamType().getDisplayName() + " 말 글자를 "
-                        + pieceData.getLabelText() + " 로 변경했습니다.",
-                pieceData.getTeamType().getColor()
-        ));
-    }
-
-    /**
-     * 좌클릭은 선택한 말을 취소하는 입력으로 사용한다.
-     */
-    private void handleLeftClickInteract(PlayerInteractEvent event, Player player, GameSession session) {
-        if (!session.isUsingRemoteController(player)
-                || !session.isPlayingPhase()
-                || !session.isCurrentTurnPlayer(player.getUniqueId())
-                || session.getSelectedPiece() == null) {
-            return;
+        if (presetEditor.getPieceEditMode() == PresetEditor.PieceEditMode.RESIZE) {
+            player.sendMessage(Component.text(
+                    pieceData.getTeamType().getDisplayName() + " 크기: " + String.format("%.2f", presetEditor.getPieceSize()),
+                    pieceData.getTeamType().getColor()
+            ));
+        } else {
+            player.sendMessage(Component.text(
+                    pieceData.getTeamType().getDisplayName() + " 말 글자를 "
+                            + presetEditor.getLabelText() + " 로 변경했습니다.",
+                    pieceData.getTeamType().getColor()
+            ));
         }
-
-        if (!session.cancelSelectedPiece(player)) {
-            return;
-        }
-
-        event.setCancelled(true);
-        sendSelectionCancelledFeedback(player);
     }
 
     /**
@@ -488,13 +458,29 @@ public final class RemoteGameListener implements Listener {
     private void sendSelectionReadyFeedback(Player player) {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
         player.sendMessage(Component.text("시선 방향으로 조준하고 W/S로 세기를 조절한 뒤 우클릭으로 발사하세요.", NamedTextColor.YELLOW));
-        player.sendMessage(Component.text("좌클릭으로 취소할 수 있으며, 스페이스바로 시선을 올릴 수 있습니다.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("스페이스바로 시선을 올릴 수 있습니다.", NamedTextColor.YELLOW));
         player.sendMessage(Component.text("쉬프트를 누르면 세기 미세조절이 가능합니다.", NamedTextColor.YELLOW));
     }
 
-    private void sendSelectionCancelledFeedback(Player player) {
-        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.7F, 0.85F);
-        player.sendMessage(Component.text("말 선택을 취소했습니다.", NamedTextColor.YELLOW));
+    private @org.jetbrains.annotations.Nullable PieceData tracePresetPiece(Player player, PresetEditor presetEditor) {
+        if (!presetEditor.isEditing(player.getUniqueId())) {
+            return null;
+        }
+
+        RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
+                player.getEyeLocation(),
+                player.getEyeLocation().getDirection(),
+                REMOTE_TRACE_DISTANCE,
+                SELECTION_RAY_SIZE,
+                entity -> entity instanceof Interaction
+                        && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
+        );
+
+        if (entityTrace == null || entityTrace.getHitEntity() == null) {
+            return null;
+        }
+
+        return gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
     }
 
     private PieceData selectPieceByRay(Player player, GameSession session) {
