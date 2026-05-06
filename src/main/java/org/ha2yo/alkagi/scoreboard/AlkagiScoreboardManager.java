@@ -54,7 +54,11 @@ public final class AlkagiScoreboardManager {
             return;
         }
 
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
+        for (java.util.UUID participantId : session.getParticipants()) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player == null) {
+                continue;
+            }
             if (session.getGameState() != GameState.PLAYING) {
                 clear(player);
                 continue;
@@ -76,7 +80,7 @@ public final class AlkagiScoreboardManager {
     }
 
     public void showResult(GameSession session, @Nullable TeamType winner) {
-        clearAll();
+        clearSession(session);
     }
 
     public void clear(Player player) {
@@ -90,6 +94,15 @@ public final class AlkagiScoreboardManager {
     public void clearAll() {
         for (Player player : plugin.getServer().getOnlinePlayers()) {
             clear(player);
+        }
+    }
+
+    public void clearSession(GameSession session) {
+        for (java.util.UUID participantId : session.getParticipants()) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player != null) {
+                clear(player);
+            }
         }
     }
 

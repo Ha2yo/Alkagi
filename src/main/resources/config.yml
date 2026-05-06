@@ -1,4 +1,27 @@
-arena: {}
+arena:
+  lobby: {}
+  spectator: {}
+  boards:
+    1:
+      pos1: {}
+      pos2: {}
+      waiting: {}
+      status-display: {}
+    2:
+      pos1: {}
+      pos2: {}
+      waiting: {}
+      status-display: {}
+    3:
+      pos1: {}
+      pos2: {}
+      waiting: {}
+      status-display: {}
+    4:
+      pos1: {}
+      pos2: {}
+      waiting: {}
+      status-display: {}
 
 settings:
   piece-size: 2.35

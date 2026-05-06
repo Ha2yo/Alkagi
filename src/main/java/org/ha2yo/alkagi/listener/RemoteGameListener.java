@@ -71,19 +71,22 @@ public final class RemoteGameListener implements Listener {
         GameSession session = gameManager.getSession();
 
         // 경기 진행 중 접속자는 참가 대신 관전자 상태로 맞춘다.
-        if (session.getGameState() != GameState.WAITING) {
+        if (gameManager.hasRunningSession()) {
             Location lobbyLocation = gameManager.getArenaData().getLobbyLocation();
             if (lobbyLocation != null) {
                 player.teleport(lobbyLocation);
             }
             session.applySpectatorState(player);
             session.refreshPlayerFormatting(player);
+            gameManager.refreshRoomPlayerListName(player);
             session.refreshTurnTimerViewer(player);
+            session.syncGameMusicForPlayer(player);
             return;
         }
 
         gameManager.join(player);
         session.refreshPlayerFormatting(player);
+        gameManager.refreshRoomPlayerListName(player);
     }
 
     @EventHandler
@@ -94,8 +97,13 @@ public final class RemoteGameListener implements Listener {
 
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
-        gameManager.getSession().noteLaunchCameraRotation(event.getPlayer(), event.getFrom(), event.getTo());
-        Location fixedLocation = gameManager.getSession().enforceTurnCameraY(event.getPlayer(), event.getTo());
+        GameSession session = gameManager.getSession(event.getPlayer());
+        if (session == null) {
+            return;
+        }
+
+        session.noteLaunchCameraRotation(event.getPlayer(), event.getFrom(), event.getTo());
+        Location fixedLocation = session.enforceTurnCameraY(event.getPlayer(), event.getTo());
         if (fixedLocation != null) {
             event.setTo(fixedLocation);
         }
@@ -117,7 +125,8 @@ public final class RemoteGameListener implements Listener {
 
     @EventHandler
     public void onDropItem(PlayerDropItemEvent event) {
-        if (gameManager.getSession().isRemoteController(event.getItemDrop().getItemStack())) {
+        ItemStack itemStack = event.getItemDrop().getItemStack();
+        if (gameManager.isRoomSelector(itemStack) || gameManager.getSession().isRemoteController(itemStack)) {
             event.setCancelled(true);
         }
     }
@@ -128,7 +137,20 @@ public final class RemoteGameListener implements Listener {
             return;
         }
 
-        GameSession session = gameManager.getSession();
+        if (gameManager.isRoomMenuTitle(event.getView().getTitle())) {
+            event.setCancelled(true);
+            gameManager.handleRoomMenuClick(player, event.getCurrentItem());
+            return;
+        }
+
+        GameSession session = gameManager.getSession(player);
+        if (session == null) {
+            return;
+        }
+        if (gameManager.isRoomSelector(event.getCurrentItem()) || gameManager.isRoomSelector(event.getCursor())) {
+            event.setCancelled(true);
+            return;
+        }
         if (session.getTeam(player.getUniqueId()) == null) {
             return;
         }
@@ -149,7 +171,15 @@ public final class RemoteGameListener implements Listener {
             return;
         }
 
-        GameSession session = gameManager.getSession();
+        if (gameManager.isRoomMenuTitle(event.getView().getTitle())) {
+            event.setCancelled(true);
+            return;
+        }
+
+        GameSession session = gameManager.getSession(player);
+        if (session == null) {
+            return;
+        }
         if (session.getTeam(player.getUniqueId()) == null) {
             return;
         }
@@ -170,24 +200,44 @@ public final class RemoteGameListener implements Listener {
     @EventHandler
     public void onChat(AsyncChatEvent event) {
         Player player = event.getPlayer();
-        TeamType teamType = gameManager.getSession().getTeam(player.getUniqueId());
-        if (teamType == null) {
+        GameSession session = gameManager.getSession(player);
+        if (session == null) {
             return;
         }
 
+        TeamType teamType = session.getTeam(player.getUniqueId());
+        Integer roomId = gameManager.getRoomId(player.getUniqueId());
+        if (teamType == null && roomId == null) {
+            return;
+        }
+        NamedTextColor playerColor = teamType == null ? NamedTextColor.GRAY : teamType.getColor();
+
         event.renderer((source, sourceDisplayName, message, viewer) ->
                 Component.text()
-                        .append(Component.text(source.getName(), teamType.getColor()))
-                        .append(Component.text(": "))
+                        .append(createRoomChatPrefix(roomId))
+                        .append(Component.text("<", NamedTextColor.GRAY))
+                        .append(Component.text(source.getName(), playerColor))
+                        .append(Component.text("> ", NamedTextColor.GRAY))
                         .append(message)
                         .build()
         );
     }
 
+    private Component createRoomChatPrefix(Integer roomId) {
+        if (roomId == null) {
+            return Component.empty();
+        }
+        return Component.text("[" + roomId + "] ", gameManager.getRoomPrefixColor(roomId));
+    }
+
     @EventHandler
     public void onInput(PlayerInputEvent event) {
         Player player = event.getPlayer();
-        GameSession session = gameManager.getSession();
+        GameSession session = gameManager.getSession(player);
+        if (session == null) {
+            currentInputMap.remove(player.getUniqueId());
+            return;
+        }
         if (!session.isUsingRemoteController(player)
                 || !session.isPlayingPhase()
                 || !session.isCurrentTurnPlayer(player.getUniqueId())
@@ -204,7 +254,10 @@ public final class RemoteGameListener implements Listener {
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
-        GameSession session = gameManager.getSession();
+        GameSession session = gameManager.getSession(player);
+        if (session == null) {
+            session = gameManager.getSession();
+        }
         PresetEditor presetEditor = gameManager.getPresetEditor();
 
         if (presetEditor.isEditing(player.getUniqueId()) && player.getInventory().getItemInMainHand().getType() == Material.BLAZE_ROD) {
@@ -213,6 +266,11 @@ public final class RemoteGameListener implements Listener {
         }
 
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK && event.getAction() != Action.RIGHT_CLICK_AIR) {
+            return;
+        }
+        if (gameManager.isRoomSelector(event.getItem())) {
+            event.setCancelled(true);
+            gameManager.openRoomMenu(player);
             return;
         }
         if (!session.isUsingRemoteController(player)) {
@@ -238,7 +296,10 @@ public final class RemoteGameListener implements Listener {
             return;
         }
 
-        GameSession session = gameManager.getSession();
+        GameSession session = gameManager.getSession(player);
+        if (session == null) {
+            return;
+        }
 
         if (!session.isUsingRemoteController(player)
                 || !session.isPlayingPhase()
@@ -247,7 +308,7 @@ public final class RemoteGameListener implements Listener {
         }
 
         if (!(event.getRightClicked() instanceof Interaction interaction)
-                || !gameManager.getBoardManager().isPieceSelectionEntity(interaction.getUniqueId())) {
+                || !session.getBoardManager().isPieceSelectionEntity(interaction.getUniqueId())) {
             return;
         }
 
@@ -351,7 +412,7 @@ public final class RemoteGameListener implements Listener {
      * 배치 단계 우클릭은 현재 바라보는 보드 위치에 말을 놓는다.
      */
     private void handlePlacementInteract(PlayerInteractEvent event, Player player, GameSession session) {
-        Location target = gameManager.getArenaData().projectToBoard(
+        Location target = session.getArenaData().projectToBoard(
                 player.getEyeLocation(),
                 player.getEyeLocation().getDirection(),
                 REMOTE_TRACE_DISTANCE
@@ -414,10 +475,11 @@ public final class RemoteGameListener implements Listener {
     }
 
     private void tickHeldInputs() {
-        GameSession session = gameManager.getSession();
         currentInputMap.entrySet().removeIf(entry -> {
             Player player = gameManager.getPlugin().getServer().getPlayer(entry.getKey());
+            GameSession session = player == null ? null : gameManager.getSession(player);
             if (player == null
+                    || session == null
                     || !session.isUsingRemoteController(player)
                     || !session.isPlayingPhase()
                     || !session.isCurrentTurnPlayer(player.getUniqueId())
@@ -446,9 +508,8 @@ public final class RemoteGameListener implements Listener {
     }
 
     private boolean containsRemoteController(ItemStack[] matrix) {
-        GameSession session = gameManager.getSession();
         for (ItemStack ingredient : matrix) {
-            if (session.isRemoteController(ingredient)) {
+            if (gameManager.getSession().isRemoteController(ingredient)) {
                 return true;
             }
         }
@@ -458,8 +519,7 @@ public final class RemoteGameListener implements Listener {
     private void sendSelectionReadyFeedback(Player player) {
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, SoundCategory.PLAYERS, 0.8F, 1.25F);
         player.sendMessage(Component.text("시선 방향으로 조준하고 W/S로 세기를 조절한 뒤 우클릭으로 발사하세요.", NamedTextColor.YELLOW));
-        player.sendMessage(Component.text("스페이스바로 시선을 올릴 수 있습니다.", NamedTextColor.YELLOW));
-        player.sendMessage(Component.text("쉬프트를 누르면 세기 미세조절이 가능합니다.", NamedTextColor.YELLOW));
+        player.sendMessage(Component.text("(스페이스바: 시선 올리기, 쉬프트: 세기 미세 조정)", NamedTextColor.YELLOW));
     }
 
     private @org.jetbrains.annotations.Nullable PieceData tracePresetPiece(Player player, PresetEditor presetEditor) {
@@ -491,7 +551,7 @@ public final class RemoteGameListener implements Listener {
                 REMOTE_TRACE_DISTANCE,
                 SELECTION_RAY_SIZE,
                 entity -> entity instanceof Interaction
-                        && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
+                        && session.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
         );
 
         if (entityTrace == null || entityTrace.getHitEntity() == null) {

@@ -8,13 +8,11 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.entity.ArmorStand;
-import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.EulerAngle;
-import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.GameManager;
 import org.ha2yo.alkagi.game.GameSession;
@@ -48,14 +46,12 @@ public final class GuideRenderer {
     private static final double ARM_HORIZONTAL_PITCH = Math.toRadians(270.0D);
     private static final double ARM_HEAD_YAW = Math.toRadians(24.0D);
     private static final double RING_POINT_SPACING = 0.2D;
-    private static final double TURN_PIECE_RING_POINT_SPACING = 0.08D;
-    private static final double TURN_PIECE_RING_Y_OFFSET = 0.45D;
-    private static final double TURN_PIECE_RING_RADIUS_SCALE = 1.35D;
+    private static final double TURN_PIECE_HITBOX_POINT_SPACING = 0.08D;
+    private static final double TURN_PIECE_RING_Y_OFFSET = 0.04D;
     private static final Particle.DustOptions BLUE_DUST = new Particle.DustOptions(Color.fromRGB(40, 95, 255), 1.45F);
     private static final Particle.DustOptions RED_DUST = new Particle.DustOptions(Color.fromRGB(230, 45, 45), 1.45F);
-    private static final Particle.DustOptions TURN_BLUE_DUST = new Particle.DustOptions(Color.fromRGB(40, 95, 255), 3.2F);
-    private static final Particle.DustOptions TURN_RED_DUST = new Particle.DustOptions(Color.fromRGB(230, 45, 45), 3.2F);
-    private static final Particle.DustOptions GREEN_DUST = new Particle.DustOptions(Color.fromRGB(110, 255, 110), 1.5F);
+    private static final Particle.DustOptions TURN_BLUE_DUST = new Particle.DustOptions(Color.fromRGB(40, 95, 255), 1.6F);
+    private static final Particle.DustOptions TURN_RED_DUST = new Particle.DustOptions(Color.fromRGB(230, 45, 45), 1.6F);
     private static final Particle.DustOptions CYAN_DUST = new Particle.DustOptions(Color.fromRGB(105, 220, 235), 1.4F);
 
     private final JavaPlugin plugin;
@@ -85,8 +81,12 @@ public final class GuideRenderer {
      * 현재 게임 단계에 따라 배치 가이드 또는 조준 가이드를 매 틱 갱신한다.
      */
     private void tick() {
-        GameSession session = gameManager.getSession();
         for (Player player : plugin.getServer().getOnlinePlayers()) {
+            GameSession session = gameManager.getSession(player);
+            if (session == null) {
+                clearAimMarker(player.getUniqueId());
+                continue;
+            }
             if (session.isPlacementPhase()) {
                 renderPlacementGuide(player, session);
             } else if (session.isPlayingPhase()) {
@@ -107,7 +107,7 @@ public final class GuideRenderer {
             return;
         }
 
-        Location target = gameManager.getArenaData().projectToBoard(
+        Location target = session.getArenaData().projectToBoard(
                 player.getEyeLocation(),
                 player.getEyeLocation().getDirection(),
                 TRACE_DISTANCE
@@ -120,20 +120,15 @@ public final class GuideRenderer {
     }
 
     private void renderPlayingGuide(Player player, GameSession session) {
-        if (!session.isCurrentTurnPlayer(player.getUniqueId()) || gameManager.getBoardManager().isActionRunning()) {
+        if (!session.isCurrentTurnPlayer(player.getUniqueId()) || session.getBoardManager().isActionRunning()) {
             clearAimMarker(player.getUniqueId());
             return;
         }
 
-        drawCurrentTurnTeamPieces(player, session);
-
         PieceData selectedPiece = session.getSelectedPiece();
         if (selectedPiece == null) {
+            drawCurrentTurnTeamPieces(player, session);
             clearAimMarker(player.getUniqueId());
-            PieceData hoveredPiece = traceHoveredPiece(player, session);
-            if (hoveredPiece != null) {
-                drawPieceHover(player, hoveredPiece.getLocation());
-            }
             return;
         }
 
@@ -153,51 +148,21 @@ public final class GuideRenderer {
 
         Particle.DustOptions dust = teamType == TeamType.BLUE ? TURN_BLUE_DUST : TURN_RED_DUST;
         for (PieceData pieceData : teamData.getAlivePieces()) {
-            double radius = (gameManager.getBoardManager().getSelectionDiameter(pieceData) / 2.0D)
-                    * TURN_PIECE_RING_RADIUS_SCALE;
-            int points = Math.max(48, (int) Math.ceil((Math.PI * 2.0D * radius) / TURN_PIECE_RING_POINT_SPACING));
-            drawPrivateRing(
+            drawPrivateHitboxOutline(
                     viewer,
                     pieceData.getLocation().clone().add(0.0D, TURN_PIECE_RING_Y_OFFSET, 0.0D),
-                    radius,
-                    dust,
-                    points
+                    session.getBoardManager().getSelectionDiameter(pieceData),
+                    dust
             );
         }
     }
 
-    /**
-     * 아직 말을 선택하지 않았을 때는 현재 조준 중인 자기 팀 말만 강조 표시한다.
-     */
-    private PieceData traceHoveredPiece(Player player, GameSession session) {
-        RayTraceResult entityTrace = player.getWorld().rayTraceEntities(
-                player.getEyeLocation(),
-                player.getEyeLocation().getDirection(),
-                TRACE_DISTANCE,
-                entity -> entity instanceof Interaction
-                        && gameManager.getBoardManager().isPieceSelectionEntity(entity.getUniqueId())
-        );
-
-        if (entityTrace == null || entityTrace.getHitEntity() == null) {
-            return null;
-        }
-
-        PieceData hoveredPiece = gameManager.getBoardManager().findPieceByEntity(entityTrace.getHitEntity().getUniqueId());
-        if (hoveredPiece == null || hoveredPiece.getTeamType() != session.getTeam(player.getUniqueId())) {
-            return null;
-        }
-        return hoveredPiece;
-    }
-
     private void drawPlacementMarker(Player viewer, Location target, TeamType teamType) {
         Particle.DustOptions dust = teamType == TeamType.BLUE ? BLUE_DUST : RED_DUST;
-        double radius = gameManager.getBoardManager().getPieceRadius();
+        double radius = gameManager.getSession(viewer) == null
+                ? gameManager.getBoardManager().getPieceRadius()
+                : gameManager.getSession(viewer).getBoardManager().getPieceRadius();
         drawRing(viewer, target, radius, dust, 18);
-    }
-
-    private void drawPieceHover(Player viewer, Location pieceLocation) {
-        double radius = (gameManager.getBoardManager().getSelectionDiameter() / 2.0D) * 1.08D;
-        drawRing(viewer, pieceLocation.clone().add(0.0D, 0.1D, 0.0D), radius, GREEN_DUST, 22);
     }
 
     /**
@@ -205,7 +170,7 @@ public final class GuideRenderer {
      */
     private void drawAimGuide(Player player, PieceData selectedPiece, GameSession session) {
         Location origin = selectedPiece.getLocation().clone().add(0.0D, GUIDE_Y_OFFSET, 0.0D);
-        double controlRadius = gameManager.getBoardManager().getLaunchControlRadius();
+        double controlRadius = session.getBoardManager().getLaunchControlRadius();
 
         drawRing(
                 player,
@@ -250,17 +215,27 @@ public final class GuideRenderer {
         }
     }
 
-    private void drawPrivateRing(Player viewer, Location center, double radius, Particle.DustOptions dust, int points) {
+    private void drawPrivateHitboxOutline(Player viewer, Location center, double diameter, Particle.DustOptions dust) {
         World world = center.getWorld();
         if (world == null) {
             return;
         }
 
-        for (int i = 0; i < points; i++) {
-            double angle = Math.PI * 2.0D * i / points;
-            double x = center.getX() + Math.cos(angle) * radius;
-            double z = center.getZ() + Math.sin(angle) * radius;
-            spawnPrivateDust(viewer, new Location(world, x, center.getY(), z), dust);
+        double half = diameter * 0.5D;
+        int pointsPerSide = Math.max(2, (int) Math.ceil(diameter / TURN_PIECE_HITBOX_POINT_SPACING));
+        double minX = center.getX() - half;
+        double maxX = center.getX() + half;
+        double minZ = center.getZ() - half;
+        double maxZ = center.getZ() + half;
+
+        for (int i = 0; i <= pointsPerSide; i++) {
+            double ratio = (double) i / pointsPerSide;
+            double x = minX + ((maxX - minX) * ratio);
+            double z = minZ + ((maxZ - minZ) * ratio);
+            spawnPrivateDust(viewer, new Location(world, x, center.getY(), minZ), dust);
+            spawnPrivateDust(viewer, new Location(world, x, center.getY(), maxZ), dust);
+            spawnPrivateDust(viewer, new Location(world, minX, center.getY(), z), dust);
+            spawnPrivateDust(viewer, new Location(world, maxX, center.getY(), z), dust);
         }
     }
 

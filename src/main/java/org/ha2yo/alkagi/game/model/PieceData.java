@@ -5,6 +5,8 @@ import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.Vector;
 import org.ha2yo.alkagi.game.TeamType;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,6 +35,7 @@ public final class PieceData {
     private final double pieceSize;
     private double heightScale;
     private String labelText;
+    private float labelYawOffset;
     private Location location;
     private boolean alive;
     private ArmorStand entity;
@@ -94,6 +97,11 @@ public final class PieceData {
         this.labelText = normalizeLabelText(teamType, labelText);
     }
 
+    public void setLabelYawOffset(float labelYawOffset) {
+        this.labelYawOffset = labelYawOffset;
+        updateLabelLocations();
+    }
+
     public Location getLocation() {
         return location.clone();
     }
@@ -123,7 +131,19 @@ public final class PieceData {
      * 말 생존 여부를 바꾸고 탈락 시 연결된 엔티티도 정리한다.
      */
     public void setAlive(boolean alive) {
+        setAlive(alive, null, 0L, null);
+    }
+
+    public void setAlive(boolean alive, @Nullable JavaPlugin plugin, long visualRemovalDelayTicks) {
+        setAlive(alive, plugin, visualRemovalDelayTicks, null);
+    }
+
+    public void setAlive(boolean alive, @Nullable JavaPlugin plugin, long visualRemovalDelayTicks, @Nullable Vector visualVelocity) {
         this.alive = alive;
+        if (alive) {
+            return;
+        }
+
         if (!alive && entity != null) {
             entity.remove();
             entity = null;
@@ -132,16 +152,64 @@ public final class PieceData {
             interactionEntity.remove();
             interactionEntity = null;
         }
-        if (!alive && displayEntity != null) {
+        if (plugin != null && visualRemovalDelayTicks > 0L) {
+            ItemDisplay delayedDisplay = displayEntity;
+            List<TextDisplay> delayedLabels = new ArrayList<>(labelEntities);
+            displayEntity = null;
+            labelEntities.clear();
+            scheduleDelayedVisualRemoval(plugin, visualRemovalDelayTicks, visualVelocity, delayedDisplay, delayedLabels);
+            return;
+        }
+
+        if (displayEntity != null) {
             displayEntity.remove();
             displayEntity = null;
         }
-        if (!alive) {
-            for (TextDisplay labelEntity : labelEntities) {
-                labelEntity.remove();
-            }
-            labelEntities.clear();
+        for (TextDisplay labelEntity : labelEntities) {
+            labelEntity.remove();
         }
+        labelEntities.clear();
+    }
+
+    private void scheduleDelayedVisualRemoval(
+            JavaPlugin plugin,
+            long visualRemovalDelayTicks,
+            @Nullable Vector visualVelocity,
+            @Nullable ItemDisplay delayedDisplay,
+            List<TextDisplay> delayedLabels
+    ) {
+        if (visualVelocity != null && visualVelocity.lengthSquared() > 0.0001D) {
+            Location displayStartLocation = delayedDisplay == null ? null : delayedDisplay.getLocation();
+            List<Location> labelStartLocations = delayedLabels.stream()
+                .map(TextDisplay::getLocation)
+                .toList();
+            for (long tick = 1L; tick < visualRemovalDelayTicks; tick++) {
+                long elapsedTicks = tick;
+                plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                    Vector offset = visualVelocity.clone().multiply(elapsedTicks);
+                    if (delayedDisplay != null && delayedDisplay.isValid() && displayStartLocation != null) {
+                        delayedDisplay.teleport(displayStartLocation.clone().add(offset));
+                    }
+                    for (int i = 0; i < delayedLabels.size(); i++) {
+                        TextDisplay labelEntity = delayedLabels.get(i);
+                        if (labelEntity.isValid()) {
+                            labelEntity.teleport(labelStartLocations.get(i).clone().add(offset));
+                        }
+                    }
+                }, tick);
+            }
+        }
+
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (delayedDisplay != null && delayedDisplay.isValid()) {
+                delayedDisplay.remove();
+            }
+            for (TextDisplay labelEntity : delayedLabels) {
+                if (labelEntity.isValid()) {
+                    labelEntity.remove();
+                }
+            }
+        }, visualRemovalDelayTicks);
     }
 
     public @Nullable ArmorStand getEntity() {
@@ -200,8 +268,8 @@ public final class PieceData {
         return labelLocation;
     }
 
-    private float getLabelYaw() {
-        return teamType == TeamType.BLUE ? 90.0F : -90.0F;
+    public float getLabelYaw() {
+        return (teamType == TeamType.BLUE ? 90.0F : -90.0F) + labelYawOffset;
     }
 
     private double getLabelYOffset() {

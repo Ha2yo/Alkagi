@@ -26,8 +26,8 @@ public final class AlkagiPlugin extends JavaPlugin {
         AlkagiScoreboardManager scoreboardManager = new AlkagiScoreboardManager(this);
         this.gameManager = new GameManager(this, arenaData, scoreboardManager);
         // 이전 실행에서 남은 말 엔티티를 정리한다.
-        gameManager.getBoardManager().cleanupTaggedPieceEntities();
-        gameManager.getBoardManager().refreshBoardGridLines();
+        gameManager.getBoardManagers().forEach(org.ha2yo.alkagi.game.BoardManager::cleanupTaggedPieceEntities);
+        gameManager.getBoardManagers().forEach(org.ha2yo.alkagi.game.BoardManager::refreshBoardGridLines);
 
         AlkagiCommand alkagiCommand = new AlkagiCommand(gameManager);
         PluginCommand command = getCommand("alkagi");
@@ -55,7 +55,7 @@ public final class AlkagiPlugin extends JavaPlugin {
         }
         if (gameManager != null) {
             gameManager.shutdown();
-            gameManager.getBoardManager().cleanupTaggedPieceEntities();
+            gameManager.getBoardManagers().forEach(org.ha2yo.alkagi.game.BoardManager::cleanupTaggedPieceEntities);
         }
         if (guideRenderer != null) {
             guideRenderer.stop();

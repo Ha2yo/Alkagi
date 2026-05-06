@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Collection;
 
 /**
  * 참가, 팀 배정, 배치, 턴 진행, 종료까지 게임 세션 전체 상태를 관리한다.
@@ -75,13 +76,15 @@ public final class GameSession {
     private static final long NEXT_TURN_DELAY_TICKS = 20L;
     private static final long GAME_END_DELAY_TICKS = 20L;
     private static final Duration RESULT_TITLE_FADE_IN = Duration.ofMillis(300);
-    private static final Duration RESULT_TITLE_STAY = Duration.ofSeconds(3);
+    private static final Duration RESULT_TITLE_STAY = Duration.ofSeconds(10);
     private static final Duration RESULT_TITLE_FADE_OUT = Duration.ofMillis(500);
     private static final long RESULT_DISPLAY_TICKS = durationToTicks(
         RESULT_TITLE_FADE_IN.plus(RESULT_TITLE_STAY).plus(RESULT_TITLE_FADE_OUT)
     );
     private static final double SELECTED_PIECE_CAMERA_Y_OFFSET = 1.15D;
-    private static final double SELECTED_PIECE_CAMERA_JUMP_Y_OFFSET = 5.0D;
+    private static final double SELECTED_PIECE_CAMERA_JUMP_MIN_Y_OFFSET = 2.5D;
+    private static final double SELECTED_PIECE_CAMERA_JUMP_MAX_Y_OFFSET = 7.0D;
+    private static final double SELECTED_PIECE_CAMERA_JUMP_HEIGHT_SCALE = 2.5D;
     private static final double SELECTED_PIECE_CAMERA_LIFT_VELOCITY_SCALE = 0.28D;
     private static final double SELECTED_PIECE_CAMERA_MAX_LIFT_VELOCITY = 0.55D;
     private static final double SELECTED_PIECE_CAMERA_LIFT_STOP_DISTANCE = 0.05D;
@@ -98,6 +101,8 @@ public final class GameSession {
 
     private static final PotionEffect TURN_SPEED_EFFECT =
         new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 9, false, false, false);
+    private static final PotionEffect SPECTATOR_SPEED_EFFECT =
+        new PotionEffect(PotionEffectType.SPEED, PotionEffect.INFINITE_DURATION, 29, false, false, false);
     private static final PotionEffect SPECTATOR_INVISIBILITY_EFFECT =
         new PotionEffect(PotionEffectType.INVISIBILITY, PotionEffect.INFINITE_DURATION, 0, false, false, false);
 
@@ -127,6 +132,8 @@ public final class GameSession {
     private final BossBar turnTimerBar = Bukkit.createBossBar("", BarColor.YELLOW, BarStyle.SOLID);
 
     private GameState gameState = GameState.WAITING;
+    private boolean soloMode;
+    private @Nullable TeamType resultWinner;
     private TeamType currentTurnTeam = TeamType.BLUE;
     private UUID currentTurnPlayer;
     private int configuredPieceCount;
@@ -134,6 +141,7 @@ public final class GameSession {
     private UUID lastSelectedPlayerId;
     private UUID selectionReadyFeedbackPlayerId;
     private long lastSelectedAtMillis;
+    private long playingStartedAtMillis;
     private int remainingTurnSeconds;
     private BukkitTask turnTimerTask;
     private BukkitTask gameMusicTask;
@@ -154,6 +162,7 @@ public final class GameSession {
         this.arenaData = arenaData;
         this.scoreboardManager = scoreboardManager;
         this.boardManager = boardManager;
+        this.boardManager.setSoundAudienceSupplier(this::getParticipants);
         teamDataMap.put(TeamType.BLUE, new TeamData(TeamType.BLUE));
         teamDataMap.put(TeamType.RED, new TeamData(TeamType.RED));
         placedCountMap.put(TeamType.BLUE, 0);
@@ -171,7 +180,6 @@ public final class GameSession {
 
         boolean added = participants.add(player.getUniqueId());
         if (added) {
-            sendToLobby(player);
             refreshPlayerFormatting(player);
         }
         return added;
@@ -206,6 +214,28 @@ public final class GameSession {
             @Nullable Integer playerCount
     ) {
         syncWaitingParticipants();
+        return startConfiguredParticipants(force, pieceCount, playerCount);
+    }
+
+    public boolean startAssigned(
+            boolean force,
+            int pieceCount,
+            @Nullable Integer playerCount,
+            Collection<UUID> assignedParticipants
+    ) {
+        if (gameState != GameState.WAITING) {
+            return false;
+        }
+        participants.clear();
+        participants.addAll(assignedParticipants);
+        return startConfiguredParticipants(force, pieceCount, playerCount);
+    }
+
+    private boolean startConfiguredParticipants(
+            boolean force,
+            int pieceCount,
+            @Nullable Integer playerCount
+    ) {
 
         if (gameState != GameState.WAITING) {
             return false;
@@ -243,6 +273,28 @@ public final class GameSession {
             @Nullable Integer playerCount
     ) {
         syncWaitingParticipants();
+        return startConfiguredParticipantsWithPreset(force, presetData, playerCount);
+    }
+
+    public boolean startAssignedWithPreset(
+            boolean force,
+            PresetData presetData,
+            @Nullable Integer playerCount,
+            Collection<UUID> assignedParticipants
+    ) {
+        if (gameState != GameState.WAITING) {
+            return false;
+        }
+        participants.clear();
+        participants.addAll(assignedParticipants);
+        return startConfiguredParticipantsWithPreset(force, presetData, playerCount);
+    }
+
+    private boolean startConfiguredParticipantsWithPreset(
+            boolean force,
+            PresetData presetData,
+            @Nullable Integer playerCount
+    ) {
 
         if (gameState != GameState.WAITING || presetData.isEmpty() || !presetData.isBalanced()) {
             return false;
@@ -257,10 +309,7 @@ public final class GameSession {
         if (!force && selectedPlayerCount < 2) {
             return false;
         }
-        if (!isPresetValid(presetData)) {
-            return false;
-        }
-
+        soloMode = force && selectedPlayerCount == 1;
         prepareParticipantsForGame(availableParticipants, selectedPlayerCount);
         configuredPieceCount = pieceCount;
         gameState = GameState.TEAM_ASSIGNING;
@@ -281,7 +330,7 @@ public final class GameSession {
         stopLaunchCameraFollow();
         stopSelectedCameraLiftTask();
         gameState = GameState.ENDING;
-        sendAllOnlinePlayersToLobby();
+        sendParticipantsToLobby();
         scoreboardManager.showResult(this, null);
         resetAfterDelay();
     }
@@ -295,6 +344,8 @@ public final class GameSession {
         stopLaunchCameraFollow();
         stopSelectedCameraLiftTask();
         gameState = GameState.WAITING;
+        soloMode = false;
+        resultWinner = null;
         currentTurnPlayer = null;
         currentTurnTeam = TeamType.BLUE;
         configuredPieceCount = 0;
@@ -302,6 +353,7 @@ public final class GameSession {
         lastSelectedPlayerId = null;
         selectionReadyFeedbackPlayerId = null;
         lastSelectedAtMillis = 0L;
+        playingStartedAtMillis = 0L;
         launchPowerMap.clear();
         selectedCameraReturnLocationMap.clear();
         launchCameraRotationGraceTicks.clear();
@@ -329,17 +381,23 @@ public final class GameSession {
             restoreOriginalArmor(player);
             refreshPlayerFormatting(player);
             sendToLobby(player);
+            applyLobbySpeed(player);
         }
 
         refreshAllPlayerFormatting();
-        for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
+        for (UUID participantId : new ArrayList<>(participants)) {
+            Player onlinePlayer = plugin.getServer().getPlayer(participantId);
+            if (onlinePlayer == null) {
+                continue;
+            }
             removeRemoteControllerItems(onlinePlayer);
             clearSpectatorState(onlinePlayer);
             sendToLobby(onlinePlayer);
+            applyLobbySpeed(onlinePlayer);
         }
 
         clearTurnIndicators();
-        scoreboardManager.clearAll();
+        scoreboardManager.clearSession(this);
     }
 
     /**
@@ -351,6 +409,18 @@ public final class GameSession {
 
         List<UUID> shuffled = new ArrayList<>(participants);
         Collections.shuffle(shuffled);
+
+        if (soloMode && shuffled.size() == 1) {
+            UUID playerId = shuffled.get(0);
+            playerTeamMap.put(playerId, TeamType.BLUE);
+            teamDataMap.get(TeamType.BLUE).addPlayer(playerId);
+            teamDataMap.get(TeamType.RED).addPlayer(playerId);
+            Player player = plugin.getServer().getPlayer(playerId);
+            if (player != null) {
+                equipTeamArmor(player, TeamType.BLUE);
+            }
+            return;
+        }
 
         int blueSize = 0;
         int redSize = 0;
@@ -415,11 +485,11 @@ public final class GameSession {
             if (placementPlayer != null && placementPlayer.equals(participantId)) {
                 applyRemoteControlMode(player);
                 giveRemoteController(player);
-                Location placementLocation = arenaData.getPlacementLocation(teamType);
+                Location placementLocation = arenaData.getPlacementOrBoardCenterLocation(teamType);
                 if (placementLocation != null) {
                     player.teleport(placementLocation);
                 }
-                player.sendMessage(Component.text(formatTeamDisplayName(teamType) + " 말을 배치해 주세요.", NamedTextColor.YELLOW));
+                player.sendMessage(Component.text(formatTeamDisplayName(teamType) + " \ub9d0\uc744 \ubc30\uce58\ud574 \uc8fc\uc138\uc694.", NamedTextColor.YELLOW));
                 continue;
             }
 
@@ -433,6 +503,7 @@ public final class GameSession {
      */
     public void startPlayingPhase() {
         gameState = GameState.PLAYING;
+        playingStartedAtMillis = System.currentTimeMillis();
         for (UUID participantId : participants) {
             Player player = plugin.getServer().getPlayer(participantId);
             if (player == null) {
@@ -440,7 +511,7 @@ public final class GameSession {
             }
 
             applyRemoteControlMode(player);
-            sendToLobby(player);
+            sendToBoardView(player);
         }
 
         decideOpeningTeam();
@@ -476,7 +547,7 @@ public final class GameSession {
             giveRemoteController(player);
             showCurrentTurnTitle(player);
             player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 1.0F, 1.35F);
-            player.sendMessage(Component.text("당신 차례입니다. 블레이즈 막대로 말을 우클릭해 주세요.", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text("\ub2f9\uc2e0 \ucc28\ub840\uc785\ub2c8\ub2e4. \ube14\ub808\uc774\uc988 \ub9c9\ub300\ub85c \ub9d0\uc744 \uc6b0\ud074\ub9ad\ud574 \uc8fc\uc138\uc694.", NamedTextColor.YELLOW));
         }
         startTurnTimer();
     }
@@ -547,6 +618,7 @@ public final class GameSession {
         stopLaunchCameraFollow();
         stopSelectedCameraLiftTask();
         gameState = GameState.ENDING;
+        resultWinner = winner;
         restoreAllTurnCameras();
         scoreboardManager.showResult(this, winner);
         broadcastWinnerTitle(winner);
@@ -610,21 +682,17 @@ public final class GameSession {
         }
 
         participants.remove(playerId);
+        turnTimerBar.removePlayer(player);
         playerTeamMap.remove(playerId);
         teamDataMap.values().forEach(teamData -> teamData.removePlayer(playerId));
         placementPlayers.values().removeIf(playerId::equals);
         eliminatedPiecesByPlayer.remove(playerId);
         ownPiecesEliminatedByPlayer.remove(playerId);
 
-        stopGameMusicForPlayer(player);
-        clearRemoteControlMode(player);
-        applySpectatorState(player);
-        Location spectatorLocation = arenaData.getSpectatorLocation();
-        if (spectatorLocation != null) {
-            player.teleport(spectatorLocation);
-        } else {
-            sendToLobby(player);
-        }
+        clearRemoteControlMode(player, false);
+        clearSpectatorState(player);
+        sendToLobby(player);
+        applyLobbySpeed(player);
         refreshPlayerFormatting(player);
 
         if (gameState == GameState.PLACING) {
@@ -654,6 +722,18 @@ public final class GameSession {
         return Set.copyOf(participants);
     }
 
+    public boolean hasParticipant(UUID playerId) {
+        return participants.contains(playerId);
+    }
+
+    public ArenaData getArenaData() {
+        return arenaData;
+    }
+
+    public BoardManager getBoardManager() {
+        return boardManager;
+    }
+
     public Map<UUID, TeamType> getPlayerTeamMap() {
         return Map.copyOf(playerTeamMap);
     }
@@ -672,6 +752,18 @@ public final class GameSession {
 
     public GameState getGameState() {
         return gameState;
+    }
+
+    public @Nullable TeamType getResultWinner() {
+        return resultWinner;
+    }
+
+    public @Nullable UUID getMvpPlayerId() {
+        return getTopKillerId();
+    }
+
+    public @Nullable UUID getUnluckyPlayerId() {
+        return getTopOwnEliminatedPlayerId();
     }
 
     public TeamType getCurrentTurnTeam() {
@@ -727,6 +819,13 @@ public final class GameSession {
         return teamData == null ? 0 : teamData.getAlivePieceCount();
     }
 
+    public long getElapsedPlayingSeconds() {
+        if (playingStartedAtMillis <= 0L) {
+            return 0L;
+        }
+        return Math.max(0L, (System.currentTimeMillis() - playingStartedAtMillis) / 1000L);
+    }
+
     public int getRemainingTurnSeconds() {
         return remainingTurnSeconds;
     }
@@ -734,25 +833,25 @@ public final class GameSession {
     public String getPlayerTeamStatusText(UUID playerId) {
         TeamType teamType = playerTeamMap.get(playerId);
         if (teamType == TeamType.BLUE) {
-            return "청팀입니다";
+            return "\ube14\ub8e8 \ud300";
         }
         if (teamType == TeamType.RED) {
-            return "홍팀입니다";
+            return "\ub808\ub4dc \ud300";
         }
-        return "관전 중입니다";
+        return "\uad00\uc804 \uc911";
     }
 
     public String getTurnStatusText(UUID playerId) {
         if (gameState != GameState.PLAYING) {
-            return "대기 중입니다";
+            return "\ub300\uae30 \uc911";
         }
         if (currentTurnPlayer != null && currentTurnPlayer.equals(playerId)) {
-            return "당신 차례입니다";
+            return "\ub2f9\uc2e0 \ucc28\ub840\uc785\ub2c8\ub2e4";
         }
 
         TeamType teamType = playerTeamMap.get(playerId);
         if (teamType == null) {
-            return "관전 중입니다";
+            return "\uad00\uc804 \uc911";
         }
 
         TeamData currentTeamData = teamDataMap.get(currentTurnTeam);
@@ -764,14 +863,14 @@ public final class GameSession {
             oppositeTeamData.getTurnQueueSnapshot()
         );
         if (turnsRemaining < 0) {
-            return "턴 순서를 계산 중입니다";
+            return "\uc21c\uc11c\ub97c \uae30\ub2e4\ub9ac\ub294 \uc911";
         }
-        return "내 차례까지 " + turnsRemaining + "턴 남음";
+        return "\ub0b4 \ucc28\ub840\uae4c\uc9c0 " + turnsRemaining + "\ud134 \ub0a8\uc74c";
     }
 
     public String getCurrentTurnDisplayText() {
         Player currentPlayer = currentTurnPlayer == null ? null : plugin.getServer().getPlayer(currentTurnPlayer);
-        String playerName = currentPlayer == null ? "대기 중" : currentPlayer.getName();
+        String playerName = currentPlayer == null ? "\uc5c6\uc74c" : currentPlayer.getName();
         return currentTurnTeam.getDisplayName() + " - " + playerName;
     }
 
@@ -860,8 +959,6 @@ public final class GameSession {
         if (base != null) {
             spawnLocation.setY(base.getY());
         }
-        spawnLocation.setX(Math.floor(spawnLocation.getX()) + 0.5D);
-        spawnLocation.setZ(Math.floor(spawnLocation.getZ()) + 0.5D);
         return spawnLocation;
     }
 
@@ -925,11 +1022,18 @@ public final class GameSession {
 
         TeamType teamType = playerTeamMap.get(player.getUniqueId());
         PieceData pieceData = boardManager.findPieceByEntity(entityId);
-        if (teamType == null || pieceData == null || !pieceData.isAlive() || pieceData.getTeamType() != teamType) {
+        if (teamType == null || pieceData == null || !pieceData.isAlive() || pieceData.getTeamType() != getAllowedActionTeam(player.getUniqueId())) {
             return null;
         }
 
         return selectPieceData(player, pieceData);
+    }
+
+    private @Nullable TeamType getAllowedActionTeam(UUID playerId) {
+        if (soloMode && isCurrentTurnPlayer(playerId)) {
+            return currentTurnTeam;
+        }
+        return playerTeamMap.get(playerId);
     }
 
     private PieceData selectPieceData(Player player, PieceData pieceData) {
@@ -982,13 +1086,14 @@ public final class GameSession {
         }
 
         TeamType teamType = playerTeamMap.get(player.getUniqueId());
-        if (teamType == null || selectedPiece.getTeamType() != teamType) {
+        TeamType actionTeam = getAllowedActionTeam(player.getUniqueId());
+        if (teamType == null || selectedPiece.getTeamType() != actionTeam) {
             return false;
         }
 
         UUID actingPlayerId = player.getUniqueId();
-        TeamType targetTeam = teamType.opposite();
-        int ownAliveBefore = teamDataMap.get(teamType).getAlivePieceCount();
+        TeamType targetTeam = actionTeam.opposite();
+        int ownAliveBefore = teamDataMap.get(actionTeam).getAlivePieceCount();
         int opponentAliveBefore = teamDataMap.get(targetTeam).getAlivePieceCount();
         stopTurnTimer();
         PieceData launchedPiece = selectedPiece;
@@ -1089,7 +1194,11 @@ public final class GameSession {
      * 모든 온라인 플레이어의 이름색과 탭 정렬을 다시 갱신한다.
      */
     public void refreshAllPlayerFormatting() {
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
+        for (UUID participantId : participants) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player == null) {
+                continue;
+            }
             refreshPlayerFormatting(player);
         }
     }
@@ -1164,8 +1273,11 @@ public final class GameSession {
         }
 
         remainingTurnSeconds = getTurnTimeSeconds();
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
-            turnTimerBar.addPlayer(player);
+        for (UUID participantId : participants) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player != null) {
+                turnTimerBar.addPlayer(player);
+            }
         }
         updateTurnTimerBar();
         turnTimerBar.setVisible(true);
@@ -1201,8 +1313,8 @@ public final class GameSession {
 
     private void updateTurnTimerBar() {
         Player currentPlayer = currentTurnPlayer == null ? null : plugin.getServer().getPlayer(currentTurnPlayer);
-        String playerName = currentPlayer == null ? "알 수 없음" : currentPlayer.getName();
-        turnTimerBar.setTitle(currentTurnTeam.getDisplayName() + " - " + playerName + " 차례");
+        String playerName = currentPlayer == null ? "\ub300\uae30 \uc911" : currentPlayer.getName();
+        turnTimerBar.setTitle(currentTurnTeam.getDisplayName() + " - " + playerName + " \ucc28\ub840");
         int turnTimeSeconds = getTurnTimeSeconds();
         turnTimerBar.setProgress(Math.max(0.0D, Math.min(1.0D, remainingTurnSeconds / (double) turnTimeSeconds)));
         turnTimerBar.setColor(remainingTurnSeconds <= Math.max(5, turnTimeSeconds / 6) ? BarColor.RED : remainingTurnSeconds <= Math.max(10, turnTimeSeconds / 3) ? BarColor.YELLOW : BarColor.GREEN);
@@ -1216,7 +1328,7 @@ public final class GameSession {
 
         Player timedOutPlayer = plugin.getServer().getPlayer(timedOutPlayerId);
         if (timedOutPlayer != null) {
-            timedOutPlayer.sendMessage(Component.text(getTurnTimeSeconds() + "초가 지나 턴이 자동으로 넘어갑니다.", NamedTextColor.RED));
+            timedOutPlayer.sendMessage(Component.text(getTurnTimeSeconds() + "\ucd08\uac00 \uc9c0\ub098 \ud134\uc774 \uc790\ub3d9\uc73c\ub85c \ub118\uc5b4\uac11\ub2c8\ub2e4.", NamedTextColor.RED));
         }
         playSoundToParticipants(Sound.BLOCK_NOTE_BLOCK_BASS, 0.9F, 0.7F);
         endTurn();
@@ -1245,11 +1357,11 @@ public final class GameSession {
                 placementPlayers.put(teamType, candidate);
                 applyRemoteControlMode(player);
                 giveRemoteController(player);
-                Location placementLocation = arenaData.getPlacementLocation(teamType);
+                Location placementLocation = arenaData.getPlacementOrBoardCenterLocation(teamType);
                 if (placementLocation != null) {
                     player.teleport(placementLocation);
                 }
-                player.sendMessage(Component.text(formatTeamDisplayName(teamType) + " 배치 담당으로 지정되었습니다.", NamedTextColor.YELLOW));
+                player.sendMessage(Component.text(formatTeamDisplayName(teamType) + " \ubc30\uce58 \ub2f4\ub2f9\uc73c\ub85c \uc9c0\uc815\ub418\uc5c8\uc2b5\ub2c8\ub2e4.", NamedTextColor.YELLOW));
                 return;
             }
         }
@@ -1319,7 +1431,7 @@ public final class GameSession {
             currentTurnTeam = finalTeam;
             showTitleToParticipants(
                 Component.text(finalTeam.getDisplayName(), finalTeam.getColor()),
-                Component.text("선공 팀 결정!", NamedTextColor.YELLOW),
+                Component.text("\uc120\uacf5 \ud300 \uacb0\uc815!", NamedTextColor.YELLOW),
                 Duration.ofMillis(200),
                 Duration.ofSeconds(2),
                 Duration.ofMillis(400)
@@ -1331,7 +1443,7 @@ public final class GameSession {
 
         showTitleToParticipants(
             Component.text(previewTeam.getDisplayName(), previewTeam.getColor()),
-                Component.text("선공 팀 추첨 중...", NamedTextColor.YELLOW),
+                Component.text("\uc120\uacf5 \ud300 \ucd94\ucca8 \uc911...", NamedTextColor.YELLOW),
             Duration.ofMillis(0),
             Duration.ofMillis(250),
             Duration.ofMillis(150)
@@ -1364,17 +1476,16 @@ public final class GameSession {
 
     private void broadcastWinnerTitle(@Nullable TeamType winner) {
         Title title;
-        Component subtitle = createSingleMvpSubtitle();
         if (winner == null) {
             title = Title.title(
-                Component.text("무승부입니다!", NamedTextColor.YELLOW),
-                subtitle,
+                Component.text("\ubb34\uc2b9\ubd80\uc785\ub2c8\ub2e4!", NamedTextColor.YELLOW),
+                Component.empty(),
                 Title.Times.times(RESULT_TITLE_FADE_IN, RESULT_TITLE_STAY, RESULT_TITLE_FADE_OUT)
             );
         } else {
             title = Title.title(
-                Component.text(winner.getDisplayName() + " 승리!", winner.getColor()),
-                subtitle,
+                Component.text(winner.getDisplayName() + " \uc2b9\ub9ac!", winner.getColor()),
+                Component.empty(),
                 Title.Times.times(RESULT_TITLE_FADE_IN, RESULT_TITLE_STAY, RESULT_TITLE_FADE_OUT)
             );
         }
@@ -1388,24 +1499,28 @@ public final class GameSession {
         playResultSound(winner);
     }
 
-    private Component createSingleMvpSubtitle() {
-        UUID topKillerId = getTopKillerId();
-        if (topKillerId == null) {
-            return Component.empty();
-        }
-
-        TeamType teamType = playerTeamMap.get(topKillerId);
-        NamedTextColor color = teamType == null ? NamedTextColor.AQUA : teamType.getColor();
-        return Component.text()
-            .append(Component.text("MVP: ", NamedTextColor.YELLOW))
-            .append(Component.text(resolvePlayerName(topKillerId), color))
-            .build();
-    }
-
     private @Nullable UUID getTopKillerId() {
         return getEliminationRankingEntries().stream()
             .filter(stats -> stats.killCount() > 0)
             .findFirst()
+            .map(PlayerEliminationStats::playerId)
+            .orElse(null);
+    }
+
+    private @Nullable UUID getTopOwnEliminatedPlayerId() {
+        return getEliminationRankingEntries().stream()
+            .filter(stats -> stats.deathCount() > 0)
+            .min((left, right) -> {
+                int deathCompare = Integer.compare(right.deathCount(), left.deathCount());
+                if (deathCompare != 0) {
+                    return deathCompare;
+                }
+                int killCompare = Integer.compare(left.killCount(), right.killCount());
+                if (killCompare != 0) {
+                    return killCompare;
+                }
+                return resolvePlayerName(left.playerId()).compareToIgnoreCase(resolvePlayerName(right.playerId()));
+            })
             .map(PlayerEliminationStats::playerId)
             .orElse(null);
     }
@@ -1436,7 +1551,11 @@ public final class GameSession {
         }
 
         rankingLines.add(Component.text("========================================", NamedTextColor.DARK_GRAY));
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
+        for (UUID participantId : participants) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player == null) {
+                continue;
+            }
             player.sendMessage(Component.empty());
             for (Component line : rankingLines) {
                 player.sendMessage(line);
@@ -1485,9 +1604,9 @@ public final class GameSession {
             .append(Component.text(rankLabel + " ", getRankColor(rank)))
             .append(Component.text(playerName, nameColor))
             .append(Component.text(createDotLeader(rankLabel, playerName, killCount, deathCount), NamedTextColor.DARK_GRAY))
-            .append(Component.text(killCount + " 킬", NamedTextColor.YELLOW))
+            .append(Component.text(killCount + " \ud0ac", NamedTextColor.YELLOW))
             .append(Component.text(" / ", NamedTextColor.DARK_GRAY))
-            .append(Component.text(deathCount + " 팀킬", NamedTextColor.RED))
+            .append(Component.text(deathCount + " \ub370\uc2a4", NamedTextColor.RED))
             .build();
     }
 
@@ -1499,7 +1618,7 @@ public final class GameSession {
 
         OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerId);
         String playerName = offlinePlayer.getName();
-        return playerName == null ? "알 수 없음" : playerName;
+        return playerName == null ? "\uc54c \uc218 \uc5c6\uc74c" : playerName;
     }
 
     private NamedTextColor getRankColor(int rank) {
@@ -1529,13 +1648,13 @@ public final class GameSession {
 
     private void playResultSound(@Nullable TeamType winner) {
         if (winner == null) {
-            playSoundToParticipants(Sound.BLOCK_NOTE_BLOCK_BELL, 0.9F, 0.9F);
-            playSoundToParticipants(Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 0.7F, 1.35F);
+            playSoundToAudience(Sound.BLOCK_NOTE_BLOCK_BELL, 0.9F, 0.9F);
+            playSoundToAudience(Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 0.7F, 1.35F);
             return;
         }
 
-        playSoundToParticipants(Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.1F, 1.0F);
-        playSoundToParticipants(Sound.ENTITY_PLAYER_LEVELUP, 0.9F, winner == TeamType.BLUE ? 0.95F : 1.15F);
+        playSoundToAudience(Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.1F, 1.0F);
+        playSoundToAudience(Sound.ENTITY_PLAYER_LEVELUP, 0.9F, winner == TeamType.BLUE ? 0.95F : 1.15F);
     }
 
     private void playSoundToParticipants(Sound sound, float volume, float pitch) {
@@ -1547,6 +1666,10 @@ public final class GameSession {
 
             participant.playSound(participant.getLocation(), sound, SoundCategory.PLAYERS, volume, pitch);
         }
+    }
+
+    private void playSoundToAudience(Sound sound, float volume, float pitch) {
+        playSoundToParticipants(sound, volume, pitch);
     }
 
     private void startGameMusic() {
@@ -1583,13 +1706,12 @@ public final class GameSession {
         float volume = getGameMusicVolume();
         Component musicTitle = Component.text(GAME_MUSIC_ANNOUNCE_PREFIX + getGameMusicTitle(soundKey), NamedTextColor.AQUA);
         for (UUID participantId : participants) {
-            Player participant = plugin.getServer().getPlayer(participantId);
-            if (participant == null) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player == null) {
                 continue;
             }
-
-            participant.playSound(participant.getLocation(), soundKey, SoundCategory.RECORDS, volume, 1.0F);
-            participant.sendMessage(musicTitle);
+            player.playSound(player.getLocation(), soundKey, SoundCategory.RECORDS, volume, 1.0F);
+            player.sendMessage(musicTitle);
         }
         long durationTicks = Math.max(20L, getGameMusicDurationSeconds(soundKey) * 20L);
         gameMusicTask = plugin.getServer().getScheduler().runTaskLater(plugin, this::scheduleNextGameMusic, durationTicks);
@@ -1635,12 +1757,10 @@ public final class GameSession {
 
     private void stopGameMusicSound(String soundKey) {
         for (UUID participantId : participants) {
-            Player participant = plugin.getServer().getPlayer(participantId);
-            if (participant == null) {
-                continue;
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player != null) {
+                player.stopSound(soundKey, SoundCategory.RECORDS);
             }
-
-            participant.stopSound(soundKey, SoundCategory.RECORDS);
         }
     }
 
@@ -1651,6 +1771,19 @@ public final class GameSession {
         if (currentGameMusicSoundKey != null) {
             player.stopSound(currentGameMusicSoundKey, SoundCategory.RECORDS);
         }
+    }
+
+    public void syncGameMusicForPlayer(Player player) {
+        if (currentGameMusicSoundKey == null || gameState == GameState.WAITING || gameState == GameState.ENDING) {
+            return;
+        }
+
+        float volume = getGameMusicVolume();
+        player.playSound(player.getLocation(), currentGameMusicSoundKey, SoundCategory.RECORDS, volume, 1.0F);
+        player.sendMessage(Component.text(
+            GAME_MUSIC_ANNOUNCE_PREFIX + getGameMusicTitle(currentGameMusicSoundKey),
+            NamedTextColor.AQUA
+        ));
     }
 
     private String getGameMusicSoundKey() {
@@ -1750,29 +1883,48 @@ public final class GameSession {
     }
 
     private void sendToLobby(Player player) {
+        stopGameMusicForPlayer(player);
         Location lobbyLocation = arenaData.getLobbyLocation();
         if (lobbyLocation != null) {
             player.teleport(lobbyLocation);
         }
+        if (gameState == GameState.WAITING || gameState == GameState.ENDING) {
+            applyLobbySpeed(player);
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                if (player.isOnline() && (gameState == GameState.WAITING || gameState == GameState.ENDING)) {
+                    applyLobbySpeed(player);
+                }
+            }, 1L);
+        }
     }
 
-    private void sendAllOnlinePlayersToLobby() {
-        for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
-            sendToLobby(onlinePlayer);
+    private void sendToBoardView(Player player) {
+        Location boardViewLocation = arenaData.getBoardCenterViewLocation();
+        if (boardViewLocation != null) {
+            player.teleport(boardViewLocation);
+            return;
+        }
+
+        sendToLobby(player);
+    }
+
+    private void sendParticipantsToLobby() {
+        for (UUID participantId : participants) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player != null) {
+                sendToLobby(player);
+                applyLobbySpeed(player);
+            }
         }
     }
 
     private void applySpectatorStateToNonParticipants() {
-        for (Player onlinePlayer : plugin.getServer().getOnlinePlayers()) {
-            if (participants.contains(onlinePlayer.getUniqueId())) {
-                clearSpectatorState(onlinePlayer);
-                continue;
+        for (UUID participantId : participants) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player != null) {
+                clearSpectatorState(player);
+                refreshPlayerFormatting(player);
             }
-
-            restoreOriginalArmor(onlinePlayer);
-            applySpectatorState(onlinePlayer);
-            sendToLobby(onlinePlayer);
-            refreshPlayerFormatting(onlinePlayer);
         }
     }
 
@@ -1840,7 +1992,7 @@ public final class GameSession {
 
     private void showCurrentTurnTitle(Player player) {
         player.showTitle(Title.title(
-            Component.text("당신의 차례입니다", NamedTextColor.YELLOW),
+            Component.text("\ub2f9\uc2e0\uc758 \ucc28\ub840\uc785\ub2c8\ub2e4", NamedTextColor.YELLOW),
             Component.empty(),
             Title.Times.times(Duration.ofMillis(200), Duration.ofSeconds(2), Duration.ofMillis(300))
         ));
@@ -1848,7 +2000,7 @@ public final class GameSession {
 
     private String formatTeamDisplayName(TeamType teamType) {
         String name = teamType.getDisplayName();
-        return name.endsWith("팀") ? name : name + "팀";
+        return name.endsWith("\ud300") ? name : name + "\ud300";
     }
 
     private int calculateTurnsRemaining(UUID participantId, TeamType teamType, List<UUID> currentQueue, List<UUID> oppositeQueue) {
@@ -1880,7 +2032,11 @@ public final class GameSession {
     }
 
     private void clearAllPlayerInventories() {
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
+        for (UUID participantId : participants) {
+            Player player = plugin.getServer().getPlayer(participantId);
+            if (player == null) {
+                continue;
+            }
             inventoryBackupMap.remove(player.getUniqueId());
             heldSlotBackupMap.remove(player.getUniqueId());
             player.getInventory().clear();
@@ -1892,6 +2048,10 @@ public final class GameSession {
     }
 
     private void clearRemoteControlMode(Player player) {
+        clearRemoteControlMode(player, true);
+    }
+
+    private void clearRemoteControlMode(Player player, boolean applySpectatorFallback) {
         restoreTurnCamera(player.getUniqueId());
         player.setGameMode(GameMode.ADVENTURE);
         restoreFlightState(player);
@@ -1912,7 +2072,7 @@ public final class GameSession {
         }
         removeRemoteControllerItems(player);
         enforceTeamArmor(player);
-        if (playerTeamMap.get(player.getUniqueId()) == null && gameState != GameState.WAITING) {
+        if (applySpectatorFallback && playerTeamMap.get(player.getUniqueId()) == null && gameState != GameState.WAITING) {
             applySpectatorState(player);
         } else {
             clearSpectatorState(player);
@@ -1935,8 +2095,22 @@ public final class GameSession {
         }
     }
 
+    public void applyWaitingSpeed(Player player) {
+        applyLobbySpeed(player);
+    }
+
+    public void clearWaitingSpeed(Player player) {
+        player.removePotionEffect(PotionEffectType.SPEED);
+    }
+
     private void applyTurnBuff(Player player) {
+        player.removePotionEffect(PotionEffectType.SPEED);
         player.addPotionEffect(TURN_SPEED_EFFECT);
+    }
+
+    private void applyLobbySpeed(Player player) {
+        player.removePotionEffect(PotionEffectType.SPEED);
+        player.addPotionEffect(SPECTATOR_SPEED_EFFECT);
     }
 
     private void removeTurnBuff(Player player) {
@@ -2073,7 +2247,7 @@ public final class GameSession {
         }
 
         boolean lifted = selectedCameraLiftedMap.getOrDefault(player.getUniqueId(), false);
-        double liftOffset = lifted ? SELECTED_PIECE_CAMERA_JUMP_Y_OFFSET : 0.0D;
+        double liftOffset = lifted ? getSelectedPieceCameraJumpYOffset(selectedPiece) : 0.0D;
         Location currentLocation = player.getLocation();
         Location targetLocation = createSelectedPieceCameraLocation(selectedPiece, liftOffset);
 
@@ -2105,6 +2279,14 @@ public final class GameSession {
         return SELECTED_PIECE_CAMERA_Y_OFFSET
             + (pieceData.getPieceSize() * 0.15D)
             + getPieceHeightCameraDelta(pieceData);
+    }
+
+    private double getSelectedPieceCameraJumpYOffset(PieceData pieceData) {
+        double jumpOffset = getPieceVisualTopYOffset(pieceData.getHeightScale()) * SELECTED_PIECE_CAMERA_JUMP_HEIGHT_SCALE;
+        return Math.max(
+            SELECTED_PIECE_CAMERA_JUMP_MIN_Y_OFFSET,
+            Math.min(SELECTED_PIECE_CAMERA_JUMP_MAX_Y_OFFSET, jumpOffset)
+        );
     }
 
     private double getLaunchCameraYOffset(PieceData pieceData) {
@@ -2236,7 +2418,7 @@ public final class GameSession {
 
     private Location resolveTurnCameraLocation(Player player) {
         TeamType teamType = playerTeamMap.get(player.getUniqueId());
-        Location teamLocation = teamType == null ? null : arenaData.getPlacementLocation(teamType);
+        Location teamLocation = teamType == null ? null : arenaData.getPlacementOrBoardCenterLocation(teamType);
         if (teamLocation != null) {
             return teamLocation;
         }
@@ -2316,9 +2498,9 @@ public final class GameSession {
         ItemStack item = new ItemStack(Material.BLAZE_ROD);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.displayName(Component.text("원격 말 컨트롤러", NamedTextColor.AQUA));
+            meta.displayName(Component.text("\uc6d0\uaca9 \ub9d0 \ucee8\ud2b8\ub864\ub7ec", NamedTextColor.AQUA));
             meta.lore(List.of(
-                Component.text("멀리서 말을 바라보고 우클릭해 주세요.", NamedTextColor.GRAY)
+                Component.text("\uba40\ub9ac\uc11c \ub9d0\uc744 \ubc14\ub77c\ubcf4\uace0 \uc6b0\ud074\ub9ad\ud574 \uc8fc\uc138\uc694.", NamedTextColor.GRAY)
             ));
             meta.getPersistentDataContainer().set(
                 new NamespacedKey(plugin, REMOTE_CONTROLLER_KEY),
@@ -2393,7 +2575,7 @@ public final class GameSession {
         player.getInventory().setArmorContents(new ItemStack[4]);
         player.updateInventory();
         player.addPotionEffect(SPECTATOR_INVISIBILITY_EFFECT);
-        applyTurnBuff(player);
+        applyLobbySpeed(player);
     }
 
     /**

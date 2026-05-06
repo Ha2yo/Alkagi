@@ -37,6 +37,7 @@ import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -44,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * 말 생성, 배치, 발사, 충돌, 탈락 등 보드 위 물리 처리를 담당한다.
@@ -55,17 +57,19 @@ public final class BoardManager {
     private static final String BOARD_LINE_ENTITY_MARKER = "board_line";
     private static final double LEGACY_PIECE_CLEANUP_HORIZONTAL_MARGIN = 2.0D;
     private static final double LEGACY_PIECE_CLEANUP_VERTICAL_MARGIN = 6.0D;
+    private static final long FALLEN_PIECE_VISUAL_REMOVAL_DELAY_TICKS = 20L;
     public static final int JANGGI_BOARD_COLUMNS = 9;
     public static final int JANGGI_BOARD_ROWS = 10;
 
-    private static final double BOARD_LINE_Y_OFFSET = 0.001D;
-    private static final double BOARD_LINE_HEIGHT = 0.035D;
-    private static final double BOARD_LINE_THICKNESS = 0.15D;
+    private static final double BOARD_LINE_Y_OFFSET = 0.012D;
+    private static final double BOARD_LINE_HEIGHT = 0.006D;
+    private static final double BOARD_LINE_THICKNESS = 0.1D;
     private static final double BOARD_OUTER_LINE_THICKNESS = 0.22D;
+    private static final Material BOARD_LINE_MATERIAL = Material.BLACK_TERRACOTTA;
     public static final double BOARD_GRID_INSET_RATIO = 0.04D;
     private static final double BOARD_LINE_STAIR_SKIP_STEP = 0.08D;
     private static final double BOARD_LINE_STAIR_OVERLAP = 0.5D;
-    private static final double BOARD_CENTER_STRIP_HEIGHT = 0.025D;
+    private static final double BOARD_CENTER_STRIP_HEIGHT = 0.006D;
     private static final double BOARD_CENTER_STRIP_THICKNESS = 0.22D;
 
     // 말 모델의 실제 바닥 면적 비율이다. 충돌 반지름과 선택 히트박스 크기에 영향을 준다.
@@ -102,8 +106,11 @@ public final class BoardManager {
 
     // 작은 말이 무거운 말에 부딪혔을 때 뒤로 튕기는 반동을 줄인다. 0이면 반동을 제거한다.
     private static final double SMALL_TO_HEAVY_REBOUND_DAMPING = 0.0D;
-    // 무거운 말이 가벼운 말을 정타로 쳤을 때, 무거운 말의 전진 속도를 줄인다. 0이면 정면 충돌에서 멈춘다.
+    // 무거운 말이 가벼운 말을 정타로 쳤을 때 무거운 말의 전진 속도를 줄인다. 0이면 정면 충돌에서 멈춘다.
     private static final double HEAVY_TO_LIGHT_FORWARD_DAMPING = 0.0D;
+    // 말이 다른 말을 거의 정면으로 때렸을 때 때린 말의 전진 속도를 줄인다.
+    private static final double DIRECT_HIT_FORWARD_DAMPING = 0.05D;
+    private static final double DIRECT_HIT_ALIGNMENT_THRESHOLD = 0.92D;
 
     // 값이 높을수록 큰 말이 충돌에서 더 무겁게 작동한다.
     private static final double COLLISION_MASS_EXPONENT = 2.0D;
@@ -119,6 +126,7 @@ public final class BoardManager {
     private final NamespacedKey boardLineEntityKey;
     private final Map<UUID, PieceData> pieceByEntityId = new HashMap<>();
     private final Set<UUID> boardLineEntityIds = new HashSet<>();
+    private Supplier<Collection<UUID>> soundAudienceSupplier = List::of;
     private @Nullable BoardLineExclusion boardLineExclusion;
     private BukkitTask physicsTask;
     private boolean actionRunning;
@@ -132,6 +140,10 @@ public final class BoardManager {
 
     public boolean isActionRunning() {
         return actionRunning;
+    }
+
+    public void setSoundAudienceSupplier(Supplier<Collection<UUID>> soundAudienceSupplier) {
+        this.soundAudienceSupplier = soundAudienceSupplier;
     }
 
     /**
@@ -229,6 +241,7 @@ public final class BoardManager {
         Interaction interaction = (Interaction) world.spawnEntity(spawnLocation, EntityType.INTERACTION);
         interaction.setResponsive(true);
         PieceData pieceData = new PieceData(pieceId, teamType, spawnLocation, pieceSize, heightScale, labelText);
+        pieceData.setLabelYawOffset(getBoardLabelYawOffset());
         configureInteractionHitbox(interaction, pieceData);
         markPieceEntity(interaction);
 
@@ -267,6 +280,14 @@ public final class BoardManager {
     }
 
     public void removePiece(PieceData pieceData) {
+        removePiece(pieceData, 0L, null);
+    }
+
+    private void removePiece(PieceData pieceData, long visualRemovalDelayTicks) {
+        removePiece(pieceData, visualRemovalDelayTicks, null);
+    }
+
+    private void removePiece(PieceData pieceData, long visualRemovalDelayTicks, @Nullable Vector visualVelocity) {
         UUID entityId = pieceData.getEntityId();
         if (entityId != null) {
             pieceByEntityId.remove(entityId);
@@ -275,7 +296,7 @@ public final class BoardManager {
         if (interaction != null) {
             pieceByEntityId.remove(interaction.getUniqueId());
         }
-        pieceData.setAlive(false);
+        pieceData.setAlive(false, plugin, visualRemovalDelayTicks, visualVelocity);
     }
 
     /**
@@ -410,6 +431,7 @@ public final class BoardManager {
         if (boardWidth <= 0.0D || boardHeight <= 0.0D) {
             return;
         }
+        boolean rotateGrid = shouldRotateBoardGrid(pos1, pos2);
 
         double gridInset = Math.min(boardWidth, boardHeight) * BOARD_GRID_INSET_RATIO;
         minX += gridInset;
@@ -418,7 +440,7 @@ public final class BoardManager {
         maxZ -= gridInset;
 
         double exclusionHalfWidth = (BOARD_CENTER_STRIP_THICKNESS + BOARD_LINE_THICKNESS) * 0.5D;
-        if (boardWidth >= boardHeight) {
+        if (boardWidth >= boardHeight && !rotateGrid) {
             boardLineExclusion = new BoardLineExclusion(true, snapToBlockCenter((boardMinX + boardMaxX) * 0.5D), exclusionHalfWidth);
             try {
                 spawnBoardGridLinesAlongX(world, minX, maxX, minZ, maxZ, y);
@@ -435,6 +457,196 @@ public final class BoardManager {
             }
             spawnRiverGrooveAlongZ(world, boardMinX, boardMaxX, boardMinZ, boardMaxZ, y);
         }
+    }
+
+    private boolean shouldRotateBoardGrid(Location pos1, Location pos2) {
+        double dx = pos2.getX() - pos1.getX();
+        double dz = pos2.getZ() - pos1.getZ();
+        return dx * dz > 0.0D && Math.abs(Math.abs(dx) - Math.abs(dz)) <= 1.0D;
+    }
+
+    private void spawnDiagonalBoardGridLines(
+            World world,
+            Location pos1,
+            Location pos2,
+            double y
+    ) {
+        double dx = pos2.getX() - pos1.getX();
+        double dz = pos2.getZ() - pos1.getZ();
+        double sideLength = Math.sqrt((dx * dx) + (dz * dz));
+        if (sideLength <= 0.0001D) {
+            return;
+        }
+
+        double forwardX = dx / sideLength;
+        double forwardZ = dz / sideLength;
+        double rightX = -forwardZ;
+        double rightZ = forwardX;
+        double centerX = (pos1.getX() + pos2.getX()) * 0.5D;
+        double centerZ = (pos1.getZ() + pos2.getZ()) * 0.5D;
+        double halfSide = sideLength * 0.5D;
+        double inset = sideLength * BOARD_GRID_INSET_RATIO;
+        double minRight = -halfSide + inset;
+        double maxRight = halfSide - inset;
+        double minForward = -halfSide + inset;
+        double maxForward = halfSide - inset;
+        double cellWidth = (maxRight - minRight) / (JANGGI_BOARD_COLUMNS - 1);
+        double cellHeight = (maxForward - minForward) / (JANGGI_BOARD_ROWS - 1);
+
+        for (int column = 0; column < JANGGI_BOARD_COLUMNS; column++) {
+            double right = minRight + (cellWidth * column);
+            double thickness = column == 0 || column == JANGGI_BOARD_COLUMNS - 1
+                    ? BOARD_OUTER_LINE_THICKNESS
+                    : BOARD_LINE_THICKNESS;
+            spawnDiagonalBoardLine(
+                    world,
+                    centerX,
+                    centerZ,
+                    rightX,
+                    rightZ,
+                    forwardX,
+                    forwardZ,
+                    right,
+                    minForward,
+                    right,
+                    maxForward,
+                    y,
+                    thickness
+            );
+        }
+
+        for (int row = 0; row < JANGGI_BOARD_ROWS; row++) {
+            double forward = minForward + (cellHeight * row);
+            double thickness = row == 0 || row == JANGGI_BOARD_ROWS - 1
+                    ? BOARD_OUTER_LINE_THICKNESS
+                    : BOARD_LINE_THICKNESS;
+            spawnDiagonalBoardLine(
+                    world,
+                    centerX,
+                    centerZ,
+                    rightX,
+                    rightZ,
+                    forwardX,
+                    forwardZ,
+                    minRight,
+                    forward,
+                    maxRight,
+                    forward,
+                    y,
+                    thickness
+            );
+        }
+
+        double palaceLeft = minRight + (cellWidth * 3);
+        double palaceCenter = minRight + (cellWidth * 4);
+        double palaceRight = minRight + (cellWidth * 5);
+        double blueFront = minForward + (cellHeight * 2);
+        double redFront = maxForward - (cellHeight * 2);
+        spawnDiagonalPalaceLines(world, centerX, centerZ, rightX, rightZ, forwardX, forwardZ, palaceLeft, palaceCenter, palaceRight, minForward, blueFront, y);
+        spawnDiagonalPalaceLines(world, centerX, centerZ, rightX, rightZ, forwardX, forwardZ, palaceLeft, palaceCenter, palaceRight, redFront, maxForward, y);
+        spawnDiagonalBoardLine(
+                world,
+                centerX,
+                centerZ,
+                rightX,
+                rightZ,
+                forwardX,
+                forwardZ,
+                minRight,
+                0.0D,
+                maxRight,
+                0.0D,
+                y,
+                BOARD_CENTER_STRIP_THICKNESS,
+                Material.PACKED_MUD,
+                BOARD_CENTER_STRIP_HEIGHT
+        );
+    }
+
+    private void spawnDiagonalPalaceLines(
+            World world,
+            double centerX,
+            double centerZ,
+            double rightX,
+            double rightZ,
+            double forwardX,
+            double forwardZ,
+            double palaceLeft,
+            double palaceCenter,
+            double palaceRight,
+            double back,
+            double front,
+            double y
+    ) {
+        double center = (back + front) * 0.5D;
+        spawnDiagonalBoardLine(world, centerX, centerZ, rightX, rightZ, forwardX, forwardZ, palaceLeft, back, palaceCenter, center, y, BOARD_LINE_THICKNESS);
+        spawnDiagonalBoardLine(world, centerX, centerZ, rightX, rightZ, forwardX, forwardZ, palaceRight, back, palaceCenter, center, y, BOARD_LINE_THICKNESS);
+        spawnDiagonalBoardLine(world, centerX, centerZ, rightX, rightZ, forwardX, forwardZ, palaceLeft, front, palaceCenter, center, y, BOARD_LINE_THICKNESS);
+        spawnDiagonalBoardLine(world, centerX, centerZ, rightX, rightZ, forwardX, forwardZ, palaceRight, front, palaceCenter, center, y, BOARD_LINE_THICKNESS);
+    }
+
+    private void spawnDiagonalBoardLine(
+            World world,
+            double centerX,
+            double centerZ,
+            double rightX,
+            double rightZ,
+            double forwardX,
+            double forwardZ,
+            double startRight,
+            double startForward,
+            double endRight,
+            double endForward,
+            double y,
+            double thickness
+    ) {
+        spawnDiagonalBoardLine(
+                world,
+                centerX,
+                centerZ,
+                rightX,
+                rightZ,
+                forwardX,
+                forwardZ,
+                startRight,
+                startForward,
+                endRight,
+                endForward,
+                y,
+                thickness,
+                BOARD_LINE_MATERIAL,
+                BOARD_LINE_HEIGHT
+        );
+    }
+
+    private void spawnDiagonalBoardLine(
+            World world,
+            double centerX,
+            double centerZ,
+            double rightX,
+            double rightZ,
+            double forwardX,
+            double forwardZ,
+            double startRight,
+            double startForward,
+            double endRight,
+            double endForward,
+            double y,
+            double thickness,
+            Material material,
+            double height
+    ) {
+        spawnBoardLineSegment(
+                world,
+                centerX + (rightX * startRight) + (forwardX * startForward),
+                y,
+                centerZ + (rightZ * startRight) + (forwardZ * startForward),
+                centerX + (rightX * endRight) + (forwardX * endForward),
+                centerZ + (rightZ * endRight) + (forwardZ * endForward),
+                thickness,
+                material,
+                height
+        );
     }
 
     private void spawnBoardGridLinesAlongX(
@@ -634,7 +846,7 @@ public final class BoardManager {
                         startX + (dx * (segmentEnd / length)),
                         startZ + (dz * (segmentEnd / length)),
                         thickness,
-                        Material.BLACK_CONCRETE,
+                        BOARD_LINE_MATERIAL,
                         BOARD_LINE_HEIGHT
                 );
             }
@@ -651,7 +863,7 @@ public final class BoardManager {
                     endX,
                     endZ,
                     thickness,
-                    Material.BLACK_CONCRETE,
+                    BOARD_LINE_MATERIAL,
                     BOARD_LINE_HEIGHT
             );
         }
@@ -681,7 +893,7 @@ public final class BoardManager {
             double height
     ) {
         BoardLineExclusion exclusion = boardLineExclusion;
-        if (exclusion == null || material != Material.BLACK_CONCRETE) {
+        if (exclusion == null || material != BOARD_LINE_MATERIAL) {
             spawnBoardLineSegment(world, startX, startY, startZ, endX, endZ, thickness, material, height);
             return;
         }
@@ -774,6 +986,8 @@ public final class BoardManager {
         display.setBlock(material.createBlockData());
         display.setBillboard(Display.Billboard.FIXED);
         display.setInterpolationDuration(1);
+        display.setShadowRadius(0.0F);
+        display.setShadowStrength(0.0F);
         display.setViewRange(256.0F);
         display.setTransformation(new Transformation(
                 new Vector3f(),
@@ -791,7 +1005,8 @@ public final class BoardManager {
     private void clearBoardGridLines() {
         for (World world : plugin.getServer().getWorlds()) {
             for (Entity entity : world.getEntities()) {
-                if (boardLineEntityIds.contains(entity.getUniqueId()) || isTaggedBoardLineEntity(entity)) {
+                if (boardLineEntityIds.contains(entity.getUniqueId())
+                        || (isTaggedBoardLineEntity(entity) && isNearBoard(entity.getLocation(), 1.0D, 2.0D))) {
                     entity.remove();
                 }
             }
@@ -909,7 +1124,7 @@ public final class BoardManager {
         label.setShadowed(false);
         label.setTextOpacity((byte) 255);
         label.setViewRange(256.0F);
-        label.setRotation(getPieceLabelYaw(pieceData.getTeamType()), 0.0F);
+        label.setRotation(pieceData.getLabelYaw(), 0.0F);
         label.setTransformation(new Transformation(
                 new Vector3f(scaledLabelOffset.x, 0.0F, scaledDepthOffset + scaledLabelOffset.z),
                 new AxisAngle4f((float) Math.toRadians(-90.0D), 1.0F, 0.0F, 0.0F),
@@ -926,8 +1141,22 @@ public final class BoardManager {
         return teamType == TeamType.BLUE ? NamedTextColor.BLUE : NamedTextColor.RED;
     }
 
-    private float getPieceLabelYaw(TeamType teamType) {
-        return teamType == TeamType.BLUE ? 90.0F : -90.0F;
+    private float getBoardLabelYawOffset() {
+        Location pos1 = arenaData.getBoardPos1();
+        Location pos2 = arenaData.getBoardPos2();
+        if (pos1 == null || pos2 == null) {
+            return 0.0F;
+        }
+
+        double dx = pos2.getX() - pos1.getX();
+        double dz = pos2.getZ() - pos1.getZ();
+        if (dx < 0.0D && dz < 0.0D) {
+            return -90.0F;
+        }
+        if (dx > 0.0D && dz > 0.0D) {
+            return 90.0F;
+        }
+        return 0.0F;
     }
 
     private void markPieceEntity(Entity entity) {
@@ -1135,6 +1364,12 @@ public final class BoardManager {
         boolean secondHitsFirst = secondAlongNormal < 0.0D
                 && Math.abs(secondAlongNormal) > Math.abs(firstAlongNormal);
 
+        boolean firstDirectlyHitsSecond = firstHitsSecond
+                && isDirectHit(firstVelocity, normal);
+
+        boolean secondDirectlyHitsFirst = secondHitsFirst
+                && isDirectHit(secondVelocity, normal.clone().multiply(-1.0D));
+
         if (firstHitsSecond && firstMass > secondMass) {
             newFirstVelocity = firstTangentComponent.clone().add(normal.clone().multiply(
                     newFirstAlongNormal * HEAVY_TO_LIGHT_FORWARD_DAMPING
@@ -1159,10 +1394,31 @@ public final class BoardManager {
             ));
         }
 
+        if (firstDirectlyHitsSecond) {
+            newFirstVelocity = firstTangentComponent.clone().add(normal.clone().multiply(
+                    newFirstAlongNormal * DIRECT_HIT_FORWARD_DAMPING
+            ));
+        }
+
+        if (secondDirectlyHitsFirst) {
+            newSecondVelocity = secondTangentComponent.clone().add(normal.clone().multiply(
+                    newSecondAlongNormal * DIRECT_HIT_FORWARD_DAMPING
+            ));
+        }
+
         updateVelocity(first, newFirstVelocity, velocities);
         updateVelocity(second, newSecondVelocity, velocities);
         playPieceCollisionSound(first.getLocation());
         return true;
+    }
+
+    private boolean isDirectHit(Vector velocity, Vector targetDirection) {
+        double speedSquared = velocity.lengthSquared();
+        if (speedSquared <= 0.0001D) {
+            return false;
+        }
+
+        return velocity.clone().normalize().dot(targetDirection) >= DIRECT_HIT_ALIGNMENT_THRESHOLD;
     }
 
     private void movePieces(Map<PieceData, Vector> velocities, double scale) {
@@ -1192,7 +1448,7 @@ public final class BoardManager {
 
             if (!arenaData.isInsideBoard(pieceData.getLocation())) {
                 playPieceFallSound(pieceData.getLocation());
-                removePiece(pieceData);
+                removePiece(pieceData, FALLEN_PIECE_VISUAL_REMOVAL_DELAY_TICKS, entry.getValue().clone());
                 iterator.remove();
             }
         }
@@ -1319,7 +1575,11 @@ public final class BoardManager {
     }
 
     private void playSoundToParticipants(Location location, Sound sound, float volume, float pitch) {
-        for (org.bukkit.entity.Player player : plugin.getServer().getOnlinePlayers()) {
+        for (UUID playerId : soundAudienceSupplier.get()) {
+            org.bukkit.entity.Player player = plugin.getServer().getPlayer(playerId);
+            if (player == null) {
+                continue;
+            }
             player.playSound(player.getLocation(), sound, SoundCategory.MASTER, volume, pitch);
         }
     }
