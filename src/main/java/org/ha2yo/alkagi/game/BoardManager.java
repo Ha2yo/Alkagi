@@ -58,6 +58,7 @@ public final class BoardManager {
     private static final double LEGACY_PIECE_CLEANUP_HORIZONTAL_MARGIN = 2.0D;
     private static final double LEGACY_PIECE_CLEANUP_VERTICAL_MARGIN = 6.0D;
     private static final long FALLEN_PIECE_VISUAL_REMOVAL_DELAY_TICKS = 20L;
+    private static final double FALLEN_PIECE_VISUAL_GRAVITY = 0.2D;
     public static final int JANGGI_BOARD_COLUMNS = 9;
     public static final int JANGGI_BOARD_ROWS = 10;
 
@@ -288,6 +289,9 @@ public final class BoardManager {
     }
 
     private void removePiece(PieceData pieceData, long visualRemovalDelayTicks, @Nullable Vector visualVelocity) {
+        List<Vector> visualOffsets = visualVelocity == null
+                ? null
+                : createFallenPieceVisualOffsets(pieceData, visualVelocity, visualRemovalDelayTicks);
         UUID entityId = pieceData.getEntityId();
         if (entityId != null) {
             pieceByEntityId.remove(entityId);
@@ -296,7 +300,36 @@ public final class BoardManager {
         if (interaction != null) {
             pieceByEntityId.remove(interaction.getUniqueId());
         }
-        pieceData.setAlive(false, plugin, visualRemovalDelayTicks, visualVelocity);
+        pieceData.setAlive(false, plugin, visualRemovalDelayTicks, visualOffsets);
+    }
+
+    private List<Vector> createFallenPieceVisualOffsets(PieceData pieceData, Vector initialVelocity, long ticks) {
+        List<Vector> visualOffsets = new ArrayList<>();
+        Vector velocity = initialVelocity.clone();
+        velocity.setY(0.0D);
+        Vector offset = new Vector();
+        double verticalVelocity = 0.0D;
+        double massResistance = Math.sqrt(getCollisionMass(pieceData));
+        for (long tick = 1L; tick < ticks; tick++) {
+            verticalVelocity += FALLEN_PIECE_VISUAL_GRAVITY;
+            offset.setY(offset.getY() - verticalVelocity);
+            double speed = velocity.length();
+            if (speed <= STOP_THRESHOLD) {
+                visualOffsets.add(offset.clone());
+                continue;
+            }
+
+            offset.add(velocity);
+            visualOffsets.add(offset.clone());
+
+            double reducedSpeed = (speed * FRICTION) - (ROLLING_RESISTANCE * massResistance);
+            if (reducedSpeed <= STOP_THRESHOLD) {
+                velocity.zero();
+            } else {
+                velocity.multiply(reducedSpeed / speed);
+            }
+        }
+        return visualOffsets;
     }
 
     /**

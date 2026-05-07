@@ -138,7 +138,7 @@ public final class PieceData {
         setAlive(alive, plugin, visualRemovalDelayTicks, null);
     }
 
-    public void setAlive(boolean alive, @Nullable JavaPlugin plugin, long visualRemovalDelayTicks, @Nullable Vector visualVelocity) {
+    public void setAlive(boolean alive, @Nullable JavaPlugin plugin, long visualRemovalDelayTicks, @Nullable List<Vector> visualOffsets) {
         this.alive = alive;
         if (alive) {
             return;
@@ -157,7 +157,7 @@ public final class PieceData {
             List<TextDisplay> delayedLabels = new ArrayList<>(labelEntities);
             displayEntity = null;
             labelEntities.clear();
-            scheduleDelayedVisualRemoval(plugin, visualRemovalDelayTicks, visualVelocity, delayedDisplay, delayedLabels);
+            scheduleDelayedVisualRemoval(plugin, visualRemovalDelayTicks, visualOffsets, delayedDisplay, delayedLabels);
             return;
         }
 
@@ -174,29 +174,29 @@ public final class PieceData {
     private void scheduleDelayedVisualRemoval(
             JavaPlugin plugin,
             long visualRemovalDelayTicks,
-            @Nullable Vector visualVelocity,
+            @Nullable List<Vector> visualOffsets,
             @Nullable ItemDisplay delayedDisplay,
             List<TextDisplay> delayedLabels
     ) {
-        if (visualVelocity != null && visualVelocity.lengthSquared() > 0.0001D) {
+        if (visualOffsets != null && !visualOffsets.isEmpty()) {
             Location displayStartLocation = delayedDisplay == null ? null : delayedDisplay.getLocation();
             List<Location> labelStartLocations = delayedLabels.stream()
                 .map(TextDisplay::getLocation)
                 .toList();
-            for (long tick = 1L; tick < visualRemovalDelayTicks; tick++) {
-                long elapsedTicks = tick;
+            int movementTicks = (int) Math.min(visualRemovalDelayTicks - 1L, visualOffsets.size());
+            for (int tick = 1; tick <= movementTicks; tick++) {
+                Vector visualOffset = visualOffsets.get(tick - 1);
                 plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-                    Vector offset = visualVelocity.clone().multiply(elapsedTicks);
                     if (delayedDisplay != null && delayedDisplay.isValid() && displayStartLocation != null) {
-                        delayedDisplay.teleport(displayStartLocation.clone().add(offset));
+                        delayedDisplay.teleport(displayStartLocation.clone().add(visualOffset));
                     }
                     for (int i = 0; i < delayedLabels.size(); i++) {
                         TextDisplay labelEntity = delayedLabels.get(i);
                         if (labelEntity.isValid()) {
-                            labelEntity.teleport(labelStartLocations.get(i).clone().add(offset));
+                            labelEntity.teleport(labelStartLocations.get(i).clone().add(visualOffset));
                         }
                     }
-                }, tick);
+                }, (long) tick);
             }
         }
 
