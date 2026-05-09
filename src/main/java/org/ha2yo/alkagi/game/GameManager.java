@@ -127,6 +127,7 @@ public final class GameManager {
     public boolean join(
             Player player
     ) {
+        clearPlayerGameState(player);
         resetPlayerToLobbyState(player);
         Location lobbyLocation = arenaData.getLobbyLocation();
         if (lobbyLocation != null) {
@@ -362,32 +363,15 @@ public final class GameManager {
 
     public boolean kickPlayer(Player player) {
         UUID playerId = player.getUniqueId();
-        if (waitingRoomByPlayer.containsKey(playerId)) {
-            leaveWaitingRoom(playerId);
-            resetPlayerToLobbyState(player);
-            teleportToLobby(player);
-            giveRoomSelector(player);
-            session.applyWaitingSpeed(player);
-            refreshRoomPlayerListName(player);
-            return true;
-        }
-
-        GameSession assignedSession = getSession(player);
-        if (assignedSession == null || !assignedSession.kickParticipant(player)) {
-            return false;
-        }
-
-        sessionByPlayer.remove(playerId);
-        waitingRoomByPlayer.remove(playerId);
-        waitingRooms.values().forEach(room -> room.remove(playerId));
+        clearPlayerGameState(player);
         resetPlayerToLobbyState(player);
         teleportToLobby(player);
         giveRoomSelector(player);
-        assignedSession.applyWaitingSpeed(player);
+        session.applyWaitingSpeed(player);
         refreshRoomPlayerListName(player);
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             if (player.isOnline() && sessionByPlayer.get(playerId) == null) {
-                assignedSession.applyWaitingSpeed(player);
+                session.applyWaitingSpeed(player);
                 refreshRoomPlayerListName(player);
             }
         }, 1L);
@@ -456,10 +440,35 @@ public final class GameManager {
         }
     }
     private void giveRoomSelector(Player player) {
-        if (hasRunningSession()) {
-            return;
-        }
         player.getInventory().setItem(ROOM_SELECTOR_SLOT, createRoomSelector());
+    }
+
+    private void clearPlayerGameState(Player player) {
+        UUID playerId = player.getUniqueId();
+        Integer waitingRoomId = waitingRoomByPlayer.remove(playerId);
+        if (waitingRoomId != null) {
+            Set<UUID> waitingRoom = waitingRooms.get(waitingRoomId);
+            if (waitingRoom != null) {
+                waitingRoom.remove(playerId);
+            }
+            updateRoomCountdown(waitingRoomId);
+        }
+
+        sessionByPlayer.remove(playerId);
+        for (GameSession session : sessions.values()) {
+            if (!session.hasParticipant(playerId)) {
+                continue;
+            }
+
+            if (session.getGameState() == GameState.WAITING) {
+                session.removeParticipant(player);
+                continue;
+            }
+
+            if (!session.kickParticipant(player)) {
+                session.removeOfflinePlayer(playerId);
+            }
+        }
     }
 
     private void resetPlayerToLobbyState(Player player) {

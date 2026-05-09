@@ -68,25 +68,8 @@ public final class RemoteGameListener implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        GameSession session = gameManager.getSession();
-
-        // 경기 진행 중 접속자는 참가 대신 관전자 상태로 맞춘다.
-        if (gameManager.hasRunningSession()) {
-            Location lobbyLocation = gameManager.getArenaData().getLobbyLocation();
-            if (lobbyLocation != null) {
-                player.teleport(lobbyLocation);
-            }
-            session.applySpectatorState(player);
-            session.refreshPlayerFormatting(player);
-            gameManager.refreshRoomPlayerListName(player);
-            session.refreshTurnTimerViewer(player);
-            session.syncGameMusicForPlayer(player);
-            return;
-        }
-
+        currentInputMap.remove(player.getUniqueId());
         gameManager.join(player);
-        session.refreshPlayerFormatting(player);
-        gameManager.refreshRoomPlayerListName(player);
     }
 
     @EventHandler

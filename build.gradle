@@ -40,15 +40,15 @@ tasks.processResources {
 
 jar {
     archiveFileName = 'alkagi.jar'
-    destinationDirectory = file('C:/Users/Ik9014/Desktop/마크 서버/plugins')
+    destinationDirectory = file('E:/Minecraft Server/Relay Alkagi/plugins')
 }
 
 jar {
     archiveFileName = 'alkagi.jar'
-    destinationDirectory = file('C:/Users/Ik9014/Desktop/마크 서버/plugins')
+    destinationDirectory = file('E:/Minecraft Server/Relay Alkagi/plugins')
 }
 
 jar {
     archiveFileName = 'alkagi.jar'
-    destinationDirectory = file('C:\\Users\\Ik9014\\Desktop\\마크 서버\\plugins')
+    destinationDirectory = file('E:\\Minecraft Server\\Relay Alkagi\\plugins')
 }

@@ -59,6 +59,8 @@ public final class BoardManager {
     private static final double LEGACY_PIECE_CLEANUP_VERTICAL_MARGIN = 6.0D;
     private static final long FALLEN_PIECE_VISUAL_REMOVAL_DELAY_TICKS = 20L;
     private static final double FALLEN_PIECE_VISUAL_GRAVITY = 0.2D;
+    private static final double FALLEN_PIECE_WALL_SAMPLE_STEP = 0.2D;
+    private static final double FALLEN_PIECE_WALL_RADIUS_RATIO = 1.0D;
     public static final int JANGGI_BOARD_COLUMNS = 9;
     public static final int JANGGI_BOARD_ROWS = 10;
 
@@ -77,6 +79,7 @@ public final class BoardManager {
     private static final double DISPLAY_FOOTPRINT_SCALE = 0.57D;
     private static final double SELECTION_FOOTPRINT_MULTIPLIER = 1.05D;
     private static final double LABEL_FOOTPRINT_SCALE = 3.3D;
+    private static final double FALL_OUT_MARGIN_RADIUS_RATIO = 0.35D;
     private static final float LABEL_BOLD_OFFSET = 0.018F;
     private static final float LABEL_DEPTH_OFFSET = 0.55F;
 
@@ -319,7 +322,11 @@ public final class BoardManager {
                 continue;
             }
 
-            offset.add(velocity);
+            if (applyFallenPieceHorizontalStep(pieceData, offset, velocity)) {
+                velocity.zero();
+                visualOffsets.add(offset.clone());
+                continue;
+            }
             visualOffsets.add(offset.clone());
 
             double reducedSpeed = (speed * FRICTION) - (ROLLING_RESISTANCE * massResistance);
@@ -330,6 +337,47 @@ public final class BoardManager {
             }
         }
         return visualOffsets;
+    }
+
+    private boolean applyFallenPieceHorizontalStep(PieceData pieceData, Vector offset, Vector velocity) {
+        int steps = Math.max(1, (int) Math.ceil(velocity.length() / FALLEN_PIECE_WALL_SAMPLE_STEP));
+        Vector step = velocity.clone().multiply(1.0D / steps);
+        for (int i = 0; i < steps; i++) {
+            if (isFallenPieceVisualBlocked(pieceData, offset, step)) {
+                return true;
+            }
+            offset.add(step);
+        }
+        return false;
+    }
+
+    private boolean isFallenPieceVisualBlocked(PieceData pieceData, Vector offset, Vector horizontalStep) {
+        Location nextLocation = pieceData.getLocation().clone()
+                .add(offset)
+                .add(horizontalStep);
+        World world = nextLocation.getWorld();
+        if (world == null) {
+            return false;
+        }
+
+        double radius = getPieceRadius(pieceData) * FALLEN_PIECE_WALL_RADIUS_RATIO;
+        int minBlockX = (int) Math.floor(nextLocation.getX() - radius);
+        int maxBlockX = (int) Math.floor(nextLocation.getX() + radius);
+        int minBlockZ = (int) Math.floor(nextLocation.getZ() - radius);
+        int maxBlockZ = (int) Math.floor(nextLocation.getZ() + radius);
+        int minBlockY = (int) Math.floor(nextLocation.getY() + 0.5D);
+        int maxBlockY = (int) Math.floor(nextLocation.getY() + 3.0D);
+        for (int x = minBlockX; x <= maxBlockX; x++) {
+            for (int y = minBlockY; y <= maxBlockY; y++) {
+                for (int z = minBlockZ; z <= maxBlockZ; z++) {
+                    Block block = world.getBlockAt(x, y, z);
+                    if (!block.isEmpty() && !block.isPassable()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -1479,12 +1527,41 @@ public final class BoardManager {
             }
             pieceData.setLocation(flattenToBoard(flattenedLocation));
 
-            if (!arenaData.isInsideBoard(pieceData.getLocation())) {
+            if (isFallenOutOfBoard(pieceData)) {
                 playPieceFallSound(pieceData.getLocation());
                 removePiece(pieceData, FALLEN_PIECE_VISUAL_REMOVAL_DELAY_TICKS, entry.getValue().clone());
                 iterator.remove();
             }
         }
+    }
+
+    private boolean isFallenOutOfBoard(PieceData pieceData) {
+        Location location = pieceData.getLocation();
+        if (arenaData.isInsideBoard(location)) {
+            return false;
+        }
+
+        double fallOutMargin = getPieceRadius(pieceData) * FALL_OUT_MARGIN_RADIUS_RATIO;
+        Location pos1 = arenaData.getBoardPos1();
+        Location pos2 = arenaData.getBoardPos2();
+        if (pos1 == null || pos2 == null || location.getWorld() == null
+                || pos1.getWorld() == null
+                || pos2.getWorld() == null
+                || !location.getWorld().getUID().equals(pos1.getWorld().getUID())
+                || !location.getWorld().getUID().equals(pos2.getWorld().getUID())) {
+            return true;
+        }
+
+        double minX = Math.min(pos1.getX(), pos2.getX()) - fallOutMargin;
+        double maxX = Math.max(pos1.getX(), pos2.getX()) + fallOutMargin;
+        double minY = Math.min(pos1.getY(), pos2.getY());
+        double maxY = Math.max(pos1.getY(), pos2.getY());
+        double minZ = Math.min(pos1.getZ(), pos2.getZ()) - fallOutMargin;
+        double maxZ = Math.max(pos1.getZ(), pos2.getZ()) + fallOutMargin;
+
+        return location.getX() < minX || location.getX() > maxX
+                || location.getY() < minY || location.getY() > maxY
+                || location.getZ() < minZ || location.getZ() > maxZ;
     }
 
     private @Nullable Vector resolveObstacleCollision(Location previousLocation, Location newLocation, Vector velocity, PieceData pieceData) {
@@ -1604,7 +1681,8 @@ public final class BoardManager {
     }
 
     private void playPieceFallSound(Location location) {
-        playSoundToParticipants(location, Sound.BLOCK_GLASS_BREAK, 0.55F, 0.95F);
+        playSoundToParticipants(location, Sound.ENTITY_ARROW_SHOOT, 0.75F, 1.35F);
+        playSoundToParticipants(location, Sound.ENTITY_BREEZE_WIND_BURST, 0.65F, 1.15F);
     }
 
     private void playSoundToParticipants(Location location, Sound sound, float volume, float pitch) {
